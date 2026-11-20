@@ -23,8 +23,16 @@ a = ap.parse_args()
 
 inputs = list(a.inputs)
 k = min(a.workers, len(inputs))
-cuts = [round(i * len(inputs) / k) for i in range(k + 1)]
-shards = [inputs[cuts[i]:cuts[i + 1]] for i in range(k)]
+# contiguous slices of about equal bytes (keeps the input order; the input files differ a lot in size)
+sizes = [p.stat().st_size for p in inputs]
+total, shards, cur, acc = sum(sizes), [], [], 0
+for p, n in zip(inputs, sizes):
+    cur.append(p); acc += n
+    if acc >= total * (len(shards) + 1) / k and len(shards) < k - 1:
+        shards.append(cur); cur = []
+shards.append(cur)
+shards = [s for s in shards if s]
+k = len(shards)
 env = {**os.environ, "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "NUMBA_NUM_THREADS": "1"}
 work = a.output / f".shards-{a.split}"
 work.mkdir(parents=True, exist_ok=True)
