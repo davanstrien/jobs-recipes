@@ -33,7 +33,7 @@ setup() {
   $HF download n4ze3m/tiny-voca --revision $MODEL_REV --include "phonemizer/*" --include tiny-voca.pt --local-dir $W/weights -q >/dev/null || fail "weights"
   nvidia-smi --query-gpu=name,memory.total --format=csv,noheader; log "setup done"
 }
-save() { log "save $*"; for d in "$@"; do $HF buckets sync $W/$d $BK/$d >/dev/null || fail "save $d"; done; }
+save() { log "save $*"; for d in "$@"; do $HF buckets sync $W/$d $BK/$d --exclude "*.tmp" >/dev/null || fail "save $d"; done; }
 load() { log "load $*"; for d in "$@"; do mkdir -p $W/$d; $HF buckets sync $BK/$d $W/$d >/dev/null || fail "load $d"; done; }
 
 data() {
@@ -53,10 +53,16 @@ train() {
   [ -f $W/annotations/train.jsonl ] || load features annotations
   load runs/$RUN
   R=""; [ -f $W/runs/$RUN/last.pt ] && R="--resume $W/runs/$RUN/last.pt" && log "resuming from the bucket"
-  ( while sleep 600; do $HF buckets sync $W/runs/$RUN $BK/runs/$RUN >/dev/null 2>&1; done ) & SYNC=$!
+  # periodic backup every 10 min; the stop file ends it, and `wait` lets an upload in flight finish before the final save
+  rm -f $W/.stop-sync
+  ( while true; do
+      for _ in $(seq 60); do [ -f $W/.stop-sync ] && exit 0; sleep 10; done
+      $HF buckets sync $W/runs/$RUN $BK/runs/$RUN --exclude "*.tmp" >/dev/null 2>&1 || log "periodic save failed"
+    done ) & SYNC=$!
   python -m tiny_voca.train --train $W/annotations/train.jsonl --validation $W/annotations/validation.jsonl --output $W/runs/$RUN \
-      --steps $STEPS --gan-start $GAN_START --gan-ratio 0.7 --teacher-final 0 --max-seconds 172800 $R || { kill $SYNC; save runs/$RUN; fail "train"; }
-  kill $SYNC; save runs/$RUN; log "train done"
+      --steps $STEPS --gan-start $GAN_START --gan-ratio 0.7 --teacher-final 0 --max-seconds 172800 $R
+  rc=$?; touch $W/.stop-sync; wait $SYNC; save runs/$RUN
+  [ $rc = 0 ] || fail "train"; log "train done"
 }
 
 evaluate() {

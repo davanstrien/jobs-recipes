@@ -41,26 +41,40 @@ assert not any(codes), f"prepare shards failed: {codes} (see {a.output}/prepare-
 (a.output / a.split).mkdir(parents=True, exist_ok=True)
 accepted = rejected = 0
 schema = None
-with open(a.output / f"{a.split}.jsonl", "w") as man, open(a.output / f"{a.split}.rejected.jsonl", "w") as rej:
+seen = set()
+man_tmp, rej_tmp = a.output / f"{a.split}.jsonl.tmp", a.output / f"{a.split}.rejected.jsonl.tmp"
+with open(man_tmp, "w") as man, open(rej_tmp, "w") as rej:
     for i in range(k):
         d = work / str(i)
         meta = json.loads((d / f"{a.split}.preparation.json").read_text())
         assert meta["complete"], f"shard {i} incomplete"
         schema = schema or (d / "features.json").read_text()
         assert (d / "features.json").read_text() == schema, "feature schema differs between shards"
-        for line in (d / f"{a.split}.jsonl").read_text().splitlines():
-            if line.strip():
-                row = json.loads(line)
-                row["record_key"] = f"s{i}:{row['record_key']}"   # unique across shards
-                man.write(json.dumps(row, ensure_ascii=False) + "\n")
-                shutil.move(str(d / row["path"]), str(a.output / row["path"]))
-                accepted += 1
-        r = (d / f"{a.split}.rejected.jsonl")
+        # physical LF lines, as tiny_voca reads its manifests (text may hold U+2028 and other line separators)
+        for line in (d / f"{a.split}.jsonl").read_text(encoding="utf-8").split("\n"):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            row["record_key"] = f"s{i}:{row['record_key']}"   # unique across shards
+            if row["id"] in seen:   # as one serial run: the first accepted id wins, a later one is a reject
+                rej.write(json.dumps({"record_key": row["record_key"], "id": row["id"], "source": row.get("source_file"),
+                                      "reason": "ValueError: duplicate id"}, ensure_ascii=False) + "\n")
+                rejected += 1
+                continue
+            seen.add(row["id"])
+            man.write(json.dumps(row, ensure_ascii=False) + "\n")
+            dst = a.output / row["path"]
+            if not dst.exists():
+                os.link(d / row["path"], dst)   # hard link: the shard keeps its file until the merge is complete
+            accepted += 1
+        r = d / f"{a.split}.rejected.jsonl"
         if r.exists():
-            for line in r.read_text().splitlines():
+            for line in r.read_text(encoding="utf-8").split("\n"):
                 if line.strip():
                     rej.write(line + "\n"); rejected += 1
 (a.output / "features.json").write_text(schema)
+os.replace(man_tmp, a.output / f"{a.split}.jsonl")
+os.replace(rej_tmp, a.output / f"{a.split}.rejected.jsonl")
 (a.output / f"{a.split}.preparation.json").write_text(json.dumps(
     {"identity": {"sharded": True, "shards": [[str(p) for p in s] for s in shards]}, "complete": True, "accepted": accepted, "rejected": rejected}))
 shutil.rmtree(work)
