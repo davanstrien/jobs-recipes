@@ -30,8 +30,9 @@ Run the commands from the root of this repository. A recipe made of one uv scrip
 <recipe>/<script>.py`, which uploads the local script for you. A recipe with several files mounts its folder into the
 Job with `-v ./<recipe>:/scripts:ro`. Each recipe's README gives its exact commands.
 
-`hf jobs uv run` has options of its own. For example, its `--dry-run` prints the Job and does not submit it, even when
-it comes after the script path. The scripts in this repository do not use option names that the CLI uses.
+`hf jobs uv run` reads its own options (`--dry-run`, `--timeout`, `--name`, `--label`, ...) even after the script path, so
+a script option with the same name never reaches the script. Put `--` before the script's options to pass them through
+(`hf jobs uv run ... script.py -- --timeout 5`). The scripts in this repository do not use option names that the CLI uses.
 
 ## Watch, cost and stop a Job
 
