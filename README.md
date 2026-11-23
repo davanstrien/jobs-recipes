@@ -1,5 +1,12 @@
 # Jobs recipes
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <img src="assets/banner-light.svg" alt="Jobs Recipes: tested recipes for Hugging Face Jobs" width="100%">
+  </picture>
+</p>
+
 Tested recipes for things you can do with [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs):
 train or reproduce a model, build a dataset, run batch inference, render 3D assets, build a container image, run a
 service against a bucket, and more. Anything that runs in a container on a CPU or GPU can be a recipe.

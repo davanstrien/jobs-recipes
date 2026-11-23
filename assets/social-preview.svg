@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Jobs Recipes: tested recipes for Hugging Face Jobs">
+<rect width="1280" height="640" fill="#fff8e7"/>
+<g transform="translate(100,0)">
+<g transform="translate(130,200) scale(1.15)"><g transform="rotate(-8 100 100)">
+<rect x="38" y="28" width="132" height="156" rx="18" fill="#111111"/>
+<rect x="28" y="18" width="132" height="156" rx="18" fill="#ffd21e" stroke="#111111" stroke-width="10"/>
+<polyline points="54,58 82,82 54,106" fill="none" stroke="#111" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/><line x1="96" y1="106" x2="130" y2="106" stroke="#111" stroke-width="14" stroke-linecap="round"/><circle cx="152" cy="162" r="34" fill="#111"/><circle cx="146" cy="156" r="34" fill="#111" stroke="#111" stroke-width="10"/><polyline points="131,157 142,168 162,144" fill="none" stroke="#ffd21e" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/></g></g>
+<g transform="rotate(-2 760 300)"><rect x="600" y="278" width="318" height="40" fill="#ffd21e"/></g>
+<text x="576" y="314" text-anchor="end" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="84" font-weight="800" fill="#111111" letter-spacing="-2.5">Jobs</text>
+<text x="598" y="314" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="84" font-weight="800" fill="#111111" letter-spacing="-2.5">Recipes</text>
+<text x="390" y="368" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="27" font-weight="500" fill="#55524b">Tested recipes for Hugging Face Jobs:</text>
+<text x="390" y="404" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="27" font-weight="500" fill="#55524b">commands, real costs and an AGENTS.md.</text>
+</g>
+</svg>
