@@ -14,11 +14,11 @@ the stop rules for an agent that runs the recipe for a user.
 1. **Look at the data.** Read the dataset card and list the parquet files (`hf datasets info <id>`, or
    `HfApi().list_repo_files`). Check the column names and types that the filter uses. If the dataset has no parquet
    files, stop: this recipe reads parquet only.
-2. **Test the filter.** Run the command with `--dry-run`, `--flavor cpu-upgrade` and a small `--include` (one file or one
+2. **Test the filter.** Run `filter_polars.py` with `--dry-run`, `--flavor cpu-upgrade` and a small `--include` (one file or one
    folder). Check the `RESULT` line: `output_rows` is more than 0 and the share is what the user expects. Show the user
    the share. To show them example rows, run the same small test without `--dry-run` into a private test repo and read
    3-5 rows from it.
-3. **Choose the flavor and engine** for the full run from the Polars test's `peak_memory_gb` and the size of the full
+3. **Choose the flavor and script** for the full run from the Polars test's `peak_memory_gb` and the size of the full
    input (README, "Choose an engine"). The Polars peak grows with the input, but less than the input (2.1 GB at 10BT,
    11.5 GB at 100BT). If the full input is more than about 10 times the test, run a second, larger test first. Do not
    use DuckDB's `peak_memory_gb` for this: DuckDB fills memory up to its limit.
@@ -27,11 +27,15 @@ the stop rules for an agent that runs the recipe for a user.
 5. **Check the result.** The log ends with `RESULT` and `pushed`. The output repo's README has the counts. Report the
    input rows, output rows, share, time and cost to the user.
 
+If the user needs more than one filter expression (a new column, a join, a sample), copy the script for the engine and
+change its `run_polars()` or `run_duckdb()`. Keep the rest (inputs, shards, card, push) as it is, and test the copy with
+`--dry-run` on a small `--include`.
+
 ## Stop and ask the user when
 
 - the filter expression fails (a column name or function that does not exist): show the error and propose a fix
 - the test keeps 0 rows, or a share very different from what the user expects
-- a Job is killed for memory (`Killed`, exit code 137, or the log stops with no `RESULT`): offer `--engine duckdb` or a
+- a Job is killed for memory (`Killed`, exit code 137, or the log stops with no `RESULT`): offer `filter_duckdb.py` or a
   larger flavor
 - the full run would cost more than the user agreed (CPU flavors: `hf jobs hardware`)
 - a Job waits in SCHEDULING for more than 10 minutes (offer another flavor)

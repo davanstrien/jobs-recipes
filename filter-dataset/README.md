@@ -5,7 +5,7 @@ parquet files are read in the Job over `hf://` at one commit, with your token, s
 Nothing is downloaded to your laptop.
 
 ```bash
-hf jobs uv run --flavor cpu-upgrade --timeout 1h --secrets HF_TOKEN filter-dataset/filter.py \
+hf jobs uv run --flavor cpu-upgrade --timeout 1h --secrets HF_TOKEN filter-dataset/filter_polars.py \
     --dataset HuggingFaceFW/fineweb-edu --include "sample/10BT/*.parquet" \
     --where "int_score >= 4 AND token_count >= 4000 AND language_score >= 0.95" \
     --output-repo <you>/fineweb-edu-long-hq
@@ -33,10 +33,13 @@ FineWeb-Edu at revision `87f09149`, the filter above, on `cpu-upgrade` (8 vCPU, 
 
 ## Choose an engine
 
-| engine | how it works | use it when |
-|---|---|---|
-| `polars` (default) | streaming scan and sink | the Job's memory is about 2-3 times the peak memory of a small test run. Fastest. |
-| `duckdb` | out-of-core; spills to disk | the data does not fit in memory, or a Polars run is killed for memory. Slower. |
+There is one script per engine. They take the same options (DuckDB has two more) and write the same output, so you
+can switch between them. Each script is short and has no code for the other engine, so it is easy to adapt.
+
+| script | how it works | use it when | to adapt it |
+|---|---|---|---|
+| `filter_polars.py` | streaming scan and sink | the Job's memory is about 2-3 times the peak memory of a small test run. Fastest. | change `run_polars()`: any LazyFrame code works |
+| `filter_duckdb.py` | out-of-core; spills to disk | the data does not fit in memory, or a Polars run is killed for memory. Slower. | change the SQL in `run_duckdb()` |
 
 Start with a small part of the data (one folder or a few files, with `--include`) and read the `peak_memory_gb` value in
 the `RESULT` line of a Polars run. The Polars peak grows with the input, but less than the input: 2.1 GB for 10BT and
@@ -61,9 +64,8 @@ output is pushed as one file.
 | `--include` | all parquet files | one or more globs of parquet paths in the repo, e.g. `"data/fra_Latn/*.parquet"` |
 | `--where` | required | the SQL filter expression. It must work in both Polars (`pl.sql_expr`) and DuckDB |
 | `--columns` | all | columns to keep |
-| `--engine` | `polars` | `polars` or `duckdb` |
-| `--memory-limit` | DuckDB's own (80 % of memory) | DuckDB only, e.g. `24GB` |
-| `--threads` | `$CPU_CORES` on Jobs | DuckDB only. Polars also defaults to `$CPU_CORES` (unless `POLARS_MAX_THREADS` is set). |
+| `--memory-limit` | DuckDB's own (80 % of memory) | `filter_duckdb.py` only, e.g. `24GB` |
+| `--threads` | `$CPU_CORES` on Jobs | `filter_duckdb.py` only. `filter_polars.py` also uses `$CPU_CORES` (unless `POLARS_MAX_THREADS` is set). |
 | `--output-repo` | required | the dataset repo to create or update; its `data/` files are replaced |
 | `--public` | off | create the output repo public. It does not change an existing repo's visibility. |
 | `--dry-run` | off | filter and print the `RESULT` line, but do not push |
@@ -84,7 +86,7 @@ RESULT engine polars <version> input_rows <n> output_rows <n> (<percent> %) shar
 
 ## Write a filter
 
-The expression is SQL. These work in both engines:
+The expression is SQL. These work in both scripts:
 
 - comparisons and logic: `score >= 3 AND (lang = 'fr' OR lang = 'de')`
 - lists: `dump IN ('CC-MAIN-2024-10', 'CC-MAIN-2024-18')`

@@ -1,21 +1,20 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["polars>=2.1", "duckdb>=1.5", "pyarrow>=18", "huggingface_hub>=1.0"]
+# dependencies = ["duckdb>=1.5", "pyarrow>=18", "huggingface_hub>=1.0"]
 # ///
-"""Filter a large Hugging Face dataset on a Job and push the result as a new dataset.
+"""Filter a large Hugging Face dataset with DuckDB on a Job, and push the result as a new dataset.
 
-The filter is one SQL expression, for example "int_score >= 4 AND token_count >= 4000". Both engines run the same
-expression: Polars (pl.sql_expr) or DuckDB (WHERE). The input parquet files are read over hf:// at one commit with
-your token (so private and gated datasets work), and nothing is downloaded first.
+The filter is one SQL WHERE expression, for example "int_score >= 4 AND token_count >= 4000". The input parquet files
+are read over hf:// at one commit with your token (so private and gated datasets work). DuckDB runs out-of-core: it
+spills to disk when memory is full, so it also works when the data does not fit in memory. Slower than
+filter_polars.py.
 
-  - polars (default): streaming scan and sink. Fast; use it when the job's memory is about 2-3 times the peak that a
-    small test run shows.
-  - duckdb: out-of-core; spills to disk, so it also works when the data does not fit in memory. Slower.
+To adapt it, change the SQL in run_duckdb(): joins, GROUP BY, window functions and DuckDB's text functions all work.
 
 Output: <output-repo> (private unless --public) with data/train-*.parquet and a README that records the source, the
-revision, the filter, the engine and the row counts.
+commit, the filter and the row counts.
 
-    hf jobs uv run --flavor cpu-upgrade --timeout 1h --secrets HF_TOKEN filter-dataset/filter.py \\
+    hf jobs uv run --flavor cpu-upgrade --timeout 1h --secrets HF_TOKEN filter-dataset/filter_duckdb.py \\
         --dataset HuggingFaceFW/fineweb-edu --include "sample/10BT/*.parquet" \\
         --where "int_score >= 4 AND token_count >= 4000 AND language_score >= 0.95" \\
         --output-repo <you>/fineweb-edu-long-hq
@@ -31,6 +30,7 @@ import sys
 import time
 from pathlib import Path
 
+ENGINE = "duckdb"
 OUT = Path("/tmp/filter-out")
 SHARD_BYTES = 500 * 1024**2  # output shards of about this size
 
@@ -55,26 +55,12 @@ def ident(c):
 
 
 def input_paths(api, dataset, sha, include):
-    """hf:// paths at one commit; both engines read them with the token, so private and gated datasets work"""
+    """hf:// paths at one commit; DuckDB reads them with the token, so private and gated datasets work"""
     files = sorted(f for f in api.list_repo_files(dataset, repo_type="dataset", revision=sha)
                    if f.endswith(".parquet") and any(fnmatch.fnmatch(f, p) for p in include))
     if not files:
         raise SystemExit(f"no parquet files in {dataset}@{sha} match {include}")
     return files, [f"hf://datasets/{dataset}@{sha}/{f}" for f in files]
-
-
-def run_polars(urls, where, columns, out, token):
-    # a Job reports the host's CPUs; CPU_CORES is what the Job may use
-    if os.environ.get("CPU_CORES"):
-        os.environ.setdefault("POLARS_MAX_THREADS", os.environ["CPU_CORES"])
-    import polars as pl
-    lf = pl.scan_parquet(urls, storage_options={"token": token} if token else None)
-    n_in = lf.select(pl.len()).collect().item()   # from the parquet footers
-    lf = lf.filter(pl.sql_expr(where))
-    if columns:
-        lf = lf.select(columns)
-    lf.sink_parquet(out, compression="zstd", engine="streaming")
-    return n_in, pl.__version__
 
 
 def run_duckdb(urls, where, columns, out, memory_limit, threads, token):
@@ -133,7 +119,7 @@ def shard(path, out_dir):
 
 def card(a, revision, files, n_in, n_out, engine_version, seconds):
     meta = {"source": a.dataset, "revision": revision, "include": a.include, "where": a.where, "columns": a.columns,
-            "engine": f"{a.engine} {engine_version}", "input_files": len(files), "input_rows": n_in, "output_rows": n_out,
+            "engine": f"{ENGINE} {engine_version}", "input_files": len(files), "input_rows": n_in, "output_rows": n_out,
             "seconds": round(seconds)}
     return f"""---
 configs:
@@ -154,9 +140,9 @@ Read the source dataset's card for its licence and terms; they apply to this sub
 | filter | `{a.where}` |
 | columns | {', '.join(f'`{c}`' for c in a.columns) if a.columns else 'all'} |
 | rows | {n_out:,} of {n_in:,} ({100 * n_out / max(n_in, 1):.3f} %) |
-| engine | {a.engine} {engine_version} |
+| engine | {ENGINE} {engine_version} |
 
-Made with `filter-dataset/filter.py` from Jobs recipes on Hugging Face Jobs.
+Made with `filter-dataset/filter_duckdb.py` from Jobs recipes on Hugging Face Jobs.
 
 ```json
 {json.dumps(meta, indent=1)}
@@ -169,12 +155,11 @@ def main():
     ap.add_argument("--dataset", required=True, help="source dataset repo id")
     ap.add_argument("--revision", default=None, help="commit to read (default: the current head, resolved and logged)")
     ap.add_argument("--include", nargs="+", default=["*.parquet", "**/*.parquet"], help="glob(s) of parquet files in the repo")
-    ap.add_argument("--where", required=True, help="SQL filter expression, the same for both engines")
+    ap.add_argument("--where", required=True, help="SQL filter expression")
     ap.add_argument("--columns", nargs="*", default=None, help="columns to keep (default: all)")
-    ap.add_argument("--engine", choices=["polars", "duckdb"], default="polars")
-    ap.add_argument("--memory-limit", default="", help="duckdb only, e.g. 24GB (default: DuckDB's own, 80 %% of RAM)")
+    ap.add_argument("--memory-limit", default="", help="e.g. 24GB (default: DuckDB's own, 80 %% of RAM)")
     ap.add_argument("--threads", type=int, default=int(os.environ.get("CPU_CORES") or 0),
-                    help="duckdb only (default: $CPU_CORES on Jobs, else DuckDB's own)")
+                    help="threads (default: $CPU_CORES on Jobs, else DuckDB's own)")
     ap.add_argument("--output-repo", required=True, help="dataset repo to create or update")
     ap.add_argument("--public", action="store_true", help="create the output repo public (default: private)")
     ap.add_argument("--dry-run", action="store_true", help="filter and report, but do not push")
@@ -192,19 +177,16 @@ def main():
     revision = api.dataset_info(a.dataset, revision=a.revision).sha   # a branch or tag becomes one commit
     files, urls = input_paths(api, a.dataset, revision, a.include)
     log(f"{a.dataset}@{revision}: {len(files)} files ({files[0]} ... {files[-1]})")
-    log(f"engine {a.engine}, filter: {a.where}")
+    log(f"engine {ENGINE}, filter: {a.where}")
 
     shutil.rmtree(OUT, ignore_errors=True)
     OUT.mkdir(parents=True)
     t0 = time.time()
     tmp = str(OUT / "filtered.parquet")
-    if a.engine == "polars":
-        n_in, version = run_polars(urls, a.where, a.columns, tmp, token)
-    else:
-        n_in, version = run_duckdb(urls, a.where, a.columns, tmp, a.memory_limit, a.threads, token)
+    n_in, version = run_duckdb(urls, a.where, a.columns, tmp, a.memory_limit, a.threads, token)
     seconds = time.time() - t0
     n_out, n_shards = shard(tmp, OUT / "data")
-    log(f"RESULT engine {a.engine} {version} input_rows {n_in} output_rows {n_out} ({100 * n_out / max(n_in, 1):.3f} %) "
+    log(f"RESULT engine {ENGINE} {version} input_rows {n_in} output_rows {n_out} ({100 * n_out / max(n_in, 1):.3f} %) "
         f"shards {n_shards} filter_seconds {seconds:.0f} peak_memory_gb {peak_gb():.1f}")
     (OUT / "README.md").write_text(card(a, revision, files, n_in, n_out, version, seconds))
     if a.dry_run:
