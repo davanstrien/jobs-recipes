@@ -31,13 +31,17 @@ def paired(run_dir, data_dir, seed=0, n_boot=10_000):
         return None
     gold = {}
     for i, line in enumerate((data_dir / "development.jsonl").read_text().splitlines()):
-        q = next(iter(json.loads(line)["questions"].values()))
-        gold[i] = q["label"]
+        questions = json.loads(line)["questions"]
+        if len(questions) != 1:   # prepare.py writes one question per record
+            return None
+        gold[i] = next(iter(questions.values()))["label"]
     correct = []
     for f in files:
         c = {}
         for line in f.read_text().splitlines():
             r = json.loads(line)
+            if len(r["prediction"]["probabilities"]) != 1:
+                return None
             probs = next(iter(r["prediction"]["probabilities"].values()))
             i = int(r["id"].rsplit("/", 1)[1])
             c[i] = max(probs, key=probs.get) == gold[i]
@@ -57,11 +61,17 @@ def card(a, run, prep, cal, pair):
     ft, rel = run["finetuned"], run["released"]
     rows = [f"| fine-tuned (this model) | {pct(ft['acc'])} | {ft['ece']:.3f} |",
             f"| released Kev-4B | {pct(rel['acc'])} | {rel['ece']:.3f} |"]
+    temp = ""
     if oof and t:
-        rows.append(f"| fine-tuned, with a fitted temperature (out-of-fold; {t:.2f} on all records) | {pct(oof['acc'])} | {oof['ece']:.3f} |")
-    temp = (f"\nThe checkpoint runs at temperature 1.0. A temperature of {t:.2f}, fitted on the development records, "
-            f"lowers the calibration error (row 3). To use it, set `KEV_TEMPERATURE={t:.2f}` when you serve the model "
-            "with Kev's commands.\n") if t else ""
+        rows.append(f"| fine-tuned, temperature fitted on other folds (out-of-fold check) | {pct(oof['acc'])} | {oof['ece']:.3f} |")
+        if oof["ece"] < ft["ece"]:
+            temp = (f"\nThe checkpoint runs at temperature 1.0. Kev's calibration step fitted one temperature, {t:.2f}, on all "
+                    "development records. Row 3 checks the method out-of-fold: each fold's temperature is fitted on the other "
+                    f"folds. It lowers the calibration error from {ft['ece']:.3f} to {oof['ece']:.3f}. To use the fitted value, "
+                    f"set `KEV_TEMPERATURE={t:.2f}` when you serve the model with Kev's commands.\n")
+        else:
+            temp = ("\nThe checkpoint runs at temperature 1.0. A fitted temperature did not lower the calibration error "
+                    "out-of-fold (row 3), so keep the default.\n")
     diff = (f"Fine-tuned minus released, on the same {pair['n']} records: {100 * pair['diff']:+.1f} points (95 % bootstrap "
             f"interval {100 * pair['lo']:+.1f} to {100 * pair['hi']:+.1f}); {pair['better']} answers became correct and "
             f"{pair['worse']} became wrong.\n\n") if pair else ""
@@ -143,6 +153,14 @@ def main():
     a = ap.parse_args()
 
     run = json.loads((a.run_dir / "run.json").read_text())
+    # the --data folder must hold the development records that were benchmarked (Kev records their SHA-256)
+    import hashlib
+    dev_sha = hashlib.sha256((a.data / "development.jsonl").read_bytes()).hexdigest()
+    for d in ("finetuned-development", "baseline-development"):
+        report = a.run_dir / d / "report.json"
+        if report.exists() and json.loads(report.read_text()).get("suite_sha256") != dev_sha:
+            raise SystemExit(f"{a.data}/development.jsonl is not the file that {d} was benchmarked on: "
+                             "use the prepare.py folder of this training run")
     if run.get("status") != "completed":
         raise SystemExit(f"{a.run_dir}/run.json has status {run.get('status')!r}: the training run did not finish")
     prep = json.loads((a.data / "prepare.json").read_text())

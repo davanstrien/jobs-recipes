@@ -30,8 +30,8 @@ Use the pinned `train-kev.py` URL from the README. Each `train-kev.py` run needs
 
 - `finetuned.acc` should be above `released.acc`. If it is not, report it: the released model may already fit the task
   (on banking77 the released Kev-4B already scores 82.8 %), or the data may be too small or noisy.
-- ECE above about 0.05: tell the user to use the fitted temperature from the model card (`KEV_TEMPERATURE`) before they
-  set confidence thresholds.
+- ECE above about 0.05: if the out-of-fold row in the model card shows a lower error, tell the user to use the fitted
+  temperature (`KEV_TEMPERATURE`, in the card) before they set confidence thresholds.
 - It is one run with one seed and one development set. Say so when you report the numbers.
 
 ## Stop and ask the user when

@@ -24,12 +24,13 @@ does this message express?".
 |---|---|---|
 | released Kev-4B | 82.8 % | 0.123 |
 | fine-tuned | **87.6 %** | 0.077 |
-| fine-tuned, with a fitted temperature (out-of-fold; 1.91 on all records) | 87.6 % | 0.022 |
+| fine-tuned, temperature fitted on other folds (out-of-fold check) | 87.6 % | 0.022 |
 
 - Fine-tuned minus released, on the same 500 records: +4.8 points (95 % bootstrap interval +2.2 to +7.4); 35 answers
   became correct and 11 became wrong. One seed.
-- The released model is already good at this task; fine-tuning adds 4.8 points and the fitted temperature makes the
-  probabilities match the accuracy.
+- The released model is already good at this task; fine-tuning adds 4.8 points. Kev's calibration step fits one
+  temperature (1.91 here) on the development records; the out-of-fold check (row 3) shows that it lowers the
+  calibration error from 0.077 to 0.022.
 - Full run: 78 min on `a100-large` (training 2 epochs at about 1.06 s per record, then both benchmarks), about $3.25.
   Smoke test (`--max-steps 5`): 8.5 min, about $0.35. Prepare and publish: under a minute each on `cpu-basic`.
 - The model is [davanstrien/kev-banking77](https://huggingface.co/davanstrien/kev-banking77) (private for now).
@@ -82,8 +83,10 @@ Job").
 | `--max-chars` | 2000 | cut longer texts; Kev drops states longer than 384 tokens |
 | `--out` | required | output folder, on the mounted bucket |
 
-`prepare.json` in the output folder records the source, the commit, the counts and the smallest and largest number of
-training records per label.
+`prepare.json` in the output folder records the source, the commit, the question, the question key, the labels with
+their descriptions, the counts and the smallest and largest number of training records per label. Ask the trained
+model with the same question and labels. `--dev-split` must differ from `--train-split`; use `--dev-split none
+--n-dev <n>` to hold records out of the training split. The label column must hold one label per row.
 
 ### train-kev.py
 
