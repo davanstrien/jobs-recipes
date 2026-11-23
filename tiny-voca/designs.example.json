@@ -1,0 +1,6 @@
+[
+ {"id": "F3", "label": "Calm and mature", "prompt": "An American woman in her early fifties with a warm, calm, medium-low voice. General American accent, unhurried and reassuring, like a trusted narrator, clear articulation, gentle natural intonation."},
+ {"id": "M3", "label": "Deep and steady", "prompt": "An American man in his late forties with a deep, smooth, resonant voice. General American accent, steady and confident, measured pacing, warm and friendly, crisp articulation."},
+ {"id": "F4", "label": "British and precise", "prompt": "A British woman in her thirties with a clear, bright, medium-pitched voice. Standard Southern British accent, precise and articulate, friendly and composed, natural expressive intonation."},
+ {"id": "M4", "label": "Laid-back storyteller", "prompt": "An American man in his thirties with a relaxed, mellow tenor voice. General American accent, easygoing and good-humoured, natural conversational rhythm, expressive but never loud."}
+]
