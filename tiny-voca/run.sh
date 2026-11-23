@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tiny-voca (github.com/n4ze3m/tiny-voca) on Hugging Face Jobs: the README's training steps, one stage per call, state in a bucket.
 #
-#   hf jobs run --flavor l40sx1 --timeout 12h --secrets HF_TOKEN -v ./tiny-voca:/scripts:ro \
+#   hf jobs run --flavor rtx-pro-6000 --timeout 8h --secrets HF_TOKEN -v ./tiny-voca:/scripts:ro \
 #       -e TV_BUCKET=hf://buckets/<you>/<bucket>/tiny-voca ghcr.io/astral-sh/uv:python3.12-bookworm bash /scripts/run.sh all
 #
 # Stages: data (download, features, alignment) | train | eval (scores + ONNX) | all. SMOKE=1: two input files per split and
