@@ -20,11 +20,14 @@ GAN_START=$([ "$SMOKE" = 1 ] && echo 100 || echo 8000)
 PER_VOICE=${PER_VOICE:-$([ "$SMOKE" = 1 ] && echo 4 || echo 300)}   # evaluation clips per voice and split
 BK=${TV_BUCKET:?set TV_BUCKET, e.g. hf://buckets/<you>/<bucket>/tiny-voca}/$RUN
 W=/work; HERE=$(dirname "$0"); HF=/opt/hfcli/bin/hf
-export TINY_VOCA_FRONTEND=own DIZIONE_DATA=$W/weights/phonemizer HF_HUB_ENABLE_HF_TRANSFER=0
+export TINY_VOCA_FRONTEND=own DIZIONE_DATA=$W/weights/phonemizer HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_DISABLE_PROGRESS_BARS=1
 log() { echo "$(date +%T) $*"; }
 # CPUs this container may use (Jobs containers report the host's CPUs; the cgroup quota is the real limit)
 cpus() { read -r q p < /sys/fs/cgroup/cpu.max 2>/dev/null && [ "$q" != max ] && echo $(( q / p )) || nproc; }
 fail() { log "FAILED: $*"; exit 1; }
+[ "$RUN" = released ] && fail "RUN=released is reserved for the released checkpoint's evaluation"
+# bucket transfers are idempotent, so one that fails (e.g. a 429 rate limit) is retried with a growing wait
+retry() { for t in 1 2 3 4 5; do "$@" >/dev/null && return 0; [ $t = 5 ] && return 1; log "try $t failed: ${*:1:4}; retry in $((t * 60)) s"; sleep $((t * 60)); done; }
 
 setup() {
   log "setup"
@@ -38,12 +41,13 @@ setup() {
   $HF download n4ze3m/tiny-voca --revision $MODEL_REV --include "phonemizer/*" --include tiny-voca.pt --local-dir $W/weights -q >/dev/null || fail "weights"
   nvidia-smi --query-gpu=name,memory.total --format=csv,noheader; log "setup done"
 }
-# sync is idempotent, so a failed upload (e.g. 429 rate limit) is retried with a growing wait
-save() { log "save $*"; for d in "$@"; do for t in 1 2 3 4 5; do $HF buckets sync $W/$d $BK/$d --exclude "*.tmp" >/dev/null && break
-  [ $t = 5 ] && fail "save $d"; log "save $d: try $t failed, retry in $((t * 60)) s"; sleep $((t * 60)); done; done; }
-load() { log "load $*"; for d in "$@"; do mkdir -p $W/$d; $HF buckets sync $BK/$d $W/$d >/dev/null || fail "load $d"; done; }
+save() { log "save $*"; for d in "$@"; do retry $HF buckets sync $W/$d $BK/$d --exclude "*.tmp" || fail "save $d"; done; }
+load() { log "load $*"; for d in "$@"; do mkdir -p $W/$d; retry $HF buckets sync $BK/$d $W/$d || fail "load $d"; done; }
 
 data() {
+  # a finished data stage is reused: preparing again would change the annotation fingerprint, and training could not resume
+  if [ "${FORCE_DATA:-0}" != 1 ] && $HF buckets cp $BK/annotations/annotations.json - >/dev/null 2>&1; then
+    log "data is in the bucket: skip (FORCE_DATA=1 prepares it again)"; return; fi
   log "prepare workers: $(cpus)"
   $HF download n4ze3m/tiny-voca --repo-type dataset --revision $DS_REV --include "data/*" --include "batch2/data/*" --local-dir $W/ds -q >/dev/null || fail "dataset"
   pick() { if [ "$SMOKE" = 1 ]; then ls $1 | head -2; else ls $1; fi; }
@@ -56,13 +60,23 @@ data() {
   python -m tiny_voca.annotate --features $W/features --output $W/annotations --dataset-revision $DS_REV || fail "annotate"
   # the released model's annotations (dataset annotations/v4) kept 16,018 / 714 / 594 clips
   for s in train validation test; do log "annotated $s: $(grep -c . $W/annotations/$s.jsonl) clips"; done
+  if [ "$SMOKE" != 1 ] && [ "$DS_REV" = 63b6b89622e984d7c7a0799ca4b4c443dd5f48b2 ]; then
+    for e in train:16018 validation:714 test:594; do n=$(grep -c . $W/annotations/${e%%:*}.jsonl); d=$(( n - ${e##*:} ))
+      [ ${d#-} -le 5 ] || fail "annotated ${e%%:*}: $n clips, expected about ${e##*:}"; done
+  fi
   save features annotations; log "data done"
 }
 
 train() {
+  # a smoke test always trains from step 0; a full run resumes from the bucket
+  if [ "$SMOKE" = 1 ]; then rm -rf $W/runs/$RUN; else load runs/$RUN; fi
+  R=""
+  if [ -f $W/runs/$RUN/last.pt ]; then
+    done_steps=$(python -c "import torch; print(torch.load('$W/runs/$RUN/last.pt', map_location='cpu', weights_only=False)['step'])")
+    [ "$done_steps" -ge "$STEPS" ] && { log "train already done ($done_steps steps): skip"; return; }
+    R="--resume $W/runs/$RUN/last.pt"; log "resuming from the bucket at step $done_steps"
+  fi
   [ -f $W/annotations/train.jsonl ] || load features annotations
-  load runs/$RUN
-  R=""; [ -f $W/runs/$RUN/last.pt ] && R="--resume $W/runs/$RUN/last.pt" && log "resuming from the bucket"
   # periodic backup every 10 min; the stop file ends it, and `wait` lets an upload in flight finish before the final save
   rm -f $W/.stop-sync
   ( while true; do
@@ -81,6 +95,12 @@ evaluate() {
   python -m tiny_voca.evaluate --checkpoint $W/runs/$RUN/inference.pt --annotations $W/annotations --output $W/eval/$RUN --tag $RUN --per-voice $PER_VOICE || fail "evaluate"
   python -m tiny_voca.evaluate --checkpoint $W/weights/tiny-voca.pt --annotations $W/annotations --output $W/eval/released --tag released --per-voice $PER_VOICE || fail "evaluate released"
   mkdir -p $W/export && python -m tiny_voca.export --checkpoint $W/runs/$RUN/inference.pt --output $W/export/tiny-voca-$RUN.onnx || fail "export"
+  # one line per model for the log; the full reports are eval/<run>/report.json and eval/released/report.json
+  for t in $RUN released; do python -c "import json,sys; r=json.load(open(sys.argv[1])); a=r['summary']['test']['all']
+print('RESULT', r['tag'], 'step', r['step'], 'test wer', a['generated_wer'], 'source wer', a['reference_wer'], 'duration', a['duration_ratio'],
+      'pause', a['pause_ratio'], 'mel_dtw', a['mel_dtw'], 'token mismatches', len(r.get('frontend_token_mismatches') or []))" $W/eval/$t/report.json; done
+  # thousands of small WAV files make many upload requests: one tar per model
+  for t in $RUN released; do tar -cf $W/eval/$t/audio.tar -C $W/eval/$t audio && rm -rf $W/eval/$t/audio; done
   save eval export; log "eval done"
 }
 

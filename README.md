@@ -10,11 +10,11 @@ Each recipe is one folder with:
 
 | recipe | what you get | GPU, time, cost |
 |---|---|---|
-| [tiny-voca](tiny-voca/) | a 4.5M-parameter English TTS model with two voices, trained from scratch; scores match the released checkpoint | 1 × RTX PRO 6000, about 5 h 20 min, about $15 |
+| [tiny-voca](tiny-voca/) | a 4.5M-parameter English TTS model with two voices, trained from scratch; WER close to the released checkpoint in one tested run | 1 × RTX PRO 6000, about 5.5 h, about $15 |
 
 ## Requirements
 
-- A Hugging Face account with Jobs access.
+- A Hugging Face account that can run Jobs (a paid plan or credits).
 - The `hf` CLI (`pip install -U huggingface_hub`), logged in with a token that can write.
 - A bucket: `hf buckets create <you>/<bucket> --private`.
 

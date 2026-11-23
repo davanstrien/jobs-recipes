@@ -7,37 +7,46 @@ an agent that runs the recipe for a user.
 
 1. Their bucket (`hf://buckets/<user>/<bucket>`). If they have none, offer `hf buckets create <user>/<bucket> --private`.
    Pass `-e TV_BUCKET=hf://buckets/<user>/<bucket>/tiny-voca` to every Job.
-2. A budget. Typical: under $1 for the smoke test, about $15 for a full run on `rtx-pro-6000`.
-3. A run name (`RUN`), if they want one other than `repro`.
+2. A budget. `rtx-pro-6000` costs $2.75 per hour (check with `hf jobs hardware`). Typical: under $1 for the smoke test,
+   about $15 for a full run. The 8 h train timeout limits a full run to about $22.
+3. A run name (`RUN`), if they want one other than `repro`. Use a new name for each new experiment.
 
 ## Procedure
 
-Run the commands from the root of this repository. Run one step, check its output, then run the next.
+Run the commands from the root of this repository. Run each stage as its own Job, with the timeout below. Check its
+output before you start the next one. Do not use `run.sh all` for a full run: it goes on to training without your check.
 
-| step | run | check before going on |
-|---|---|---|
-| smoke | `run.sh all` with `-e SMOKE=1`, `--timeout 1h` | the log ends with `STAGE-DONE all`; `$TV_BUCKET/smoke/export/tiny-voca-smoke.onnx` exists |
-| data | `run.sh data` (or `run.sh all` for the whole chain) | the log lines `annotated train: 16018 clips`, `validation: 714`, `test: 594`, then `data done` |
-| train | `run.sh train`, `--timeout 8h` | `train done`; `runs/<run>/inference.pt` is in the bucket |
-| eval | `run.sh eval` | `eval done`; two `"summary"` blocks in the log, the first for the user's run, the second for the released model |
+| step | run | timeout | check before going on |
+|---|---|---|---|
+| smoke | `run.sh all` with `-e SMOKE=1` (and a new `-e RUN=smoke-<date>` for each smoke test) | 1h | the log ends with `STAGE-DONE all`; `$TV_BUCKET/$RUN/export/tiny-voca-$RUN.onnx` exists |
+| data | `run.sh data` | 1h | the log lines `annotated train: 16018 clips`, `validation: 714`, `test: 594`, then `data done` |
+| train | `run.sh train` | 8h | `train done`; `runs/<run>/inference.pt` is in the bucket |
+| eval | `run.sh eval` | 2h | `eval done`; two `RESULT` lines, the first for the user's run, the second for `released` |
 
-With the default pins, other annotation counts mean the data stage did not run as tested. Stop and report the counts.
+The data stage fails by itself if a count differs by more than 5 clips from the counts above (full data, default pins). A
+difference of 1-5 clips can come from newer Python packages: report it to the user and go on.
+
+If a stage stops, start the same stage again with the same `RUN`. Never run `run.sh data` with `FORCE_DATA=1` for a run
+that has started training: the training cannot resume on new annotations.
 
 ## Is the model good?
 
-Compare the two `"summary"` blocks of the eval log, `test` → `all`:
+Read the two `RESULT` lines of the eval log (or `eval/<run>/report.json` and `eval/released/report.json`, `summary` →
+`test` → `all`):
 
-- `generated_wer` of the user's run should be within about 0.3 points of the released model's (tested run: 1.26 % against
-  1.33 %).
-- `duration_ratio` should be between about 0.93 and 1.03.
-- Report these numbers. Download 2-3 clips from `$TV_BUCKET/<run>/eval/<run>/` and the same clips from `eval/released/`
-  for the user to compare by ear.
+- `step` of the user's run must be 104000. A lower step means the train stage did not finish; run `run.sh train` again.
+- `token mismatches` must be 0 for both models.
+- `test wer` of the user's run should be not more than about 0.3 points above the released model's (tested run: 1.26 %
+  against 1.33 %). This limit comes from one run.
+- `duration` should be between about 0.93 and 1.03.
+- Report these numbers. Download `eval/<run>/audio.tar` and `eval/released/audio.tar`, and give the user 2-3 clips with
+  the same id from both (`<id>-generated.wav`) to compare by ear.
 
 ## Stop and ask the user when
 
 - the spend would pass the agreed budget
-- the smoke test fails: report the last 30 log lines
-- the annotation counts differ from 16,018 / 714 / 594 with the default pins
+- the smoke test fails: report the `FAILED` line and the Python traceback above it
+- the data stage fails on the clip counts
 - a Job waits in SCHEDULING for more than 10 minutes (offer another GPU flavor)
 - a stage fails twice for the same reason
 
@@ -45,6 +54,5 @@ Compare the two `"summary"` blocks of the eval log, `test` → `all`:
 
 - Keep the user's bucket private unless they say otherwise.
 - Use the upstream code at the pinned commits; `run.sh` installs it. Do not copy it into the repository.
-- To continue a stopped run, use the same `RUN`. The train stage resumes from `last.pt` in the bucket. Never reuse a run
-  name for a different experiment: the train stage would resume the old run.
+- A model that the user publishes from this recipe uses the tiny-voca dataset (CC BY 4.0): tell them to credit it.
 - Log what you launched (Job ids, flavor, time, cost) for the user.
