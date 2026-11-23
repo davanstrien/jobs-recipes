@@ -76,7 +76,8 @@ The files that `--include` selects must have the same columns for `filter_polars
 
 ## Output
 
-The output repo has `data/train-XXXXX-of-YYYYY.parquet` files of about 500 MB each and a README that records the
+All matching rows go into one `train` split, also when `--include` takes files from several splits. To keep splits apart,
+run once per split into separate repos. The output repo has `data/train-XXXXX-of-YYYYY.parquet` files of about 500 MB each and a README that records the
 source dataset, the commit, the globs, the filter, the engine and the row counts. A new run into the same repo replaces
 the `data/` files and the README. A large upload can take more than one commit, so a stopped re-run can leave a mix of
 old and new files: run it again, or use a new repo name. The source dataset's licence and

@@ -11,7 +11,8 @@ the stop rules for an agent that runs the recipe for a user.
 
 ## Procedure
 
-1. **Look at the data.** Read the dataset card and list the parquet files (`HfApi().list_repo_files`). Many large
+1. **Look at the data.** Read the dataset card and list the parquet files
+   (`uv run --with huggingface_hub python -c "from huggingface_hub import HfApi; print(HfApi().list_repo_files('<id>', repo_type='dataset'))"`). Many large
    datasets have one folder per config (language, dump, ...) with split folders inside, and some have folders of
    removed or rejected rows (for example FineWeb-2's `data/<lang>_removed/`). Use the card to choose the folders that
    the user means, and say which ones you chose. Check the column names and types of one file, for example
