@@ -22,7 +22,7 @@ BK=${TV_BUCKET:?set TV_BUCKET, e.g. hf://buckets/<you>/<bucket>/tiny-voca}/$RUN
 W=/work; HERE=$(dirname "$0"); HF=/opt/hfcli/bin/hf
 export TINY_VOCA_FRONTEND=own DIZIONE_DATA=$W/weights/phonemizer HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_DISABLE_PROGRESS_BARS=1
 log() { echo "$(date +%T) $*"; }
-cpus() { nproc; }   # the CPUs this Job may use
+cpus() { echo "${CPU_CORES:-$(nproc)}"; }   # the CPUs this Job may use (nproc in older images reports the host)
 fail() { log "FAILED: $*"; exit 1; }
 [ "$RUN" = released ] && fail "RUN=released is reserved for the released checkpoint's evaluation"
 # bucket transfers are idempotent, so one that fails (e.g. a 429 rate limit) is retried with a growing wait
