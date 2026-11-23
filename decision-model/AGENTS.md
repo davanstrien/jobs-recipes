@@ -7,7 +7,9 @@ an agent that runs the recipe for a user.
 
 1. The decision: what question the model answers, and which labels it chooses from. Write the `--question` with them.
 2. The data: a Hub dataset with a text column and a label column. If their data is not on the Hub, help them push it
-   first (a private dataset is fine).
+   first (a private dataset is fine). Choose the development split with them: a `validation` split if the dataset has
+   one (keep `test` for a final check), else `test`, else `--dev-split none --n-dev <n>`. Agree the record counts
+   (`--n-train`, `--n-dev`): training time and cost grow with `--n-train`.
 3. Their bucket (`hf://buckets/<user>/<bucket>`), the model repo name, and a budget. Typical: under $1 for prepare and
    the smoke test, about $3.25 for a full run of 2,000 records × 2 epochs on `a100-large` ($2.50 per hour; check with
    `hf jobs hardware`). Training takes about 1 s per record per epoch.
@@ -20,13 +22,15 @@ check it, then run the next.
 | step | run | timeout | check before going on |
 |---|---|---|---|
 | prepare | `decision-model/prepare.py` on `cpu-basic` | 30m | the `RESULT` line: `train` and `development` counts, `labels`, and `labels_without_train_records` is empty. If `train_per_label_min` is below about 5, tell the user that rare labels will be weak. |
-| smoke | `train-kev.py ... --max-steps 5` on `a100-large`, into a new output folder | 1h | the last line is a JSON summary with `"status": "completed"`; `rejected_records` in the benchmark output is small. Report the released model's accuracy: it is the baseline to beat. |
+| smoke | `train-kev.py ... --max-steps 5` on `a100-large`, into a new output folder | 1h | the last line is a JSON summary with `"status": "completed"`; `rejected_records` in the benchmark output is small. Report the released model's accuracy: it is the baseline to beat. The fine-tuned numbers of a smoke test mean nothing (5 steps): expect accuracy close to the released model's and a worse ECE. |
 | train | `train-kev.py` without `--max-steps`, into another new output folder | records × epochs × 1.1 s + 15 min (2h for the default 2,000 × 2) | `run.json` has `"status": "completed"`; compare `finetuned` and `released` accuracy |
 | publish | `decision-model/publish.py` on `cpu-basic` | 30m | `pushed https://huggingface.co/<repo>`; the repo is private unless the user asked for public |
 
 Use the pinned `train-kev.py` URL from the README. Each `train-kev.py` run needs a new or empty output folder.
 
 ## Is the model good?
+
+These checks are for the full run, not the smoke test.
 
 - `finetuned.acc` should be above `released.acc`. If it is not, report it: the released model may already fit the task
   (on banking77 the released Kev-4B already scores 82.8 %), or the data may be too small or noisy.
