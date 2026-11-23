@@ -20,7 +20,7 @@ the stop rules for an agent that runs the recipe for a user.
    3-5 rows from it.
 3. **Choose the flavor and engine** for the full run from the Polars test's `peak_memory_gb` and the size of the full
    input (README, "Choose an engine"). The Polars peak grows with the input, but less than the input (2.1 GB at 10BT,
-   10.9 GB at 100BT). If the full input is more than about 10 times the test, run a second, larger test first. Do not
+   11.5 GB at 100BT). If the full input is more than about 10 times the test, run a second, larger test first. Do not
    use DuckDB's `peak_memory_gb` for this: DuckDB fills memory up to its limit.
 4. **Run the full filter** with a `--timeout` that fits: start from the test's `filter_seconds`, scaled by the input
    size, and double it.

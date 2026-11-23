@@ -5,8 +5,8 @@
 """Filter a large Hugging Face dataset on a Job and push the result as a new dataset.
 
 The filter is one SQL expression, for example "int_score >= 4 AND token_count >= 4000". Both engines run the same
-expression: Polars (pl.sql_expr) or DuckDB (WHERE). The input parquet files are read over HTTP at a pinned revision,
-so nothing is downloaded first.
+expression: Polars (pl.sql_expr) or DuckDB (WHERE). The input parquet files are read over hf:// at one commit with
+your token (so private and gated datasets work), and nothing is downloaded first.
 
   - polars (default): streaming scan and sink. Fast; use it when the job's memory is about 2-3 times the peak that a
     small test run shows.
@@ -24,6 +24,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import resource
 import shutil
 import sys
@@ -43,20 +44,31 @@ def peak_gb():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024**3 if sys.platform == "darwin" else 1024**2)
 
 
-def input_urls(api, dataset, revision, include):
-    files = sorted(f for f in api.list_repo_files(dataset, repo_type="dataset", revision=revision)
+def lit(s):
+    """a SQL string literal"""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def ident(c):
+    """a SQL identifier"""
+    return '"' + str(c).replace('"', '""') + '"'
+
+
+def input_paths(api, dataset, sha, include):
+    """hf:// paths at one commit; both engines read them with the token, so private and gated datasets work"""
+    files = sorted(f for f in api.list_repo_files(dataset, repo_type="dataset", revision=sha)
                    if f.endswith(".parquet") and any(fnmatch.fnmatch(f, p) for p in include))
     if not files:
-        raise SystemExit(f"no parquet files in {dataset}@{revision} match {include}")
-    return files, [f"https://huggingface.co/datasets/{dataset}/resolve/{revision}/{f}" for f in files]
+        raise SystemExit(f"no parquet files in {dataset}@{sha} match {include}")
+    return files, [f"hf://datasets/{dataset}@{sha}/{f}" for f in files]
 
 
-def run_polars(urls, where, columns, out):
+def run_polars(urls, where, columns, out, token):
     # a Job reports the host's CPUs; CPU_CORES is what the Job may use
     if os.environ.get("CPU_CORES"):
         os.environ.setdefault("POLARS_MAX_THREADS", os.environ["CPU_CORES"])
     import polars as pl
-    lf = pl.scan_parquet(urls)
+    lf = pl.scan_parquet(urls, storage_options={"token": token} if token else None)
     n_in = lf.select(pl.len()).collect().item()   # from the parquet footers
     lf = lf.filter(pl.sql_expr(where))
     if columns:
@@ -65,45 +77,58 @@ def run_polars(urls, where, columns, out):
     return n_in, pl.__version__
 
 
-def run_duckdb(urls, where, columns, out, memory_limit, threads):
+def run_duckdb(urls, where, columns, out, memory_limit, threads, token):
     import duckdb
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
+    if token:
+        con.execute(f"CREATE SECRET hf (TYPE huggingface, TOKEN {lit(token)})")
     con.execute("SET preserve_insertion_order=false;")   # lets COPY stream
     con.execute("SET temp_directory='/tmp/duckdb-spill';")
     if memory_limit:
-        con.execute(f"SET memory_limit='{memory_limit}';")
+        con.execute(f"SET memory_limit={lit(memory_limit)};")
     if threads:
-        con.execute(f"SET threads={threads};")
-    src = "read_parquet([" + ", ".join(f"'{u}'" for u in urls) + "])"
+        con.execute(f"SET threads={int(threads)};")
+    src = "read_parquet([" + ", ".join(lit(u) for u in urls) + "])"
     n_in = con.execute(f"SELECT count(*) FROM {src}").fetchone()[0]   # from the parquet footers
-    cols = ", ".join(f'"{c}"' for c in columns) if columns else "*"
-    con.execute(f"COPY (SELECT {cols} FROM {src} WHERE {where}) TO '{out}' (FORMAT parquet, COMPRESSION zstd)")
+    cols = ", ".join(ident(c) for c in columns) if columns else "*"
+    con.execute(f"COPY (SELECT {cols} FROM {src} WHERE {where}) TO {lit(out)} (FORMAT parquet, COMPRESSION zstd)")
     return n_in, duckdb.__version__
 
 
 def shard(path, out_dir):
-    """split one parquet file into data/train-XXXXX-of-YYYYY.parquet files of about SHARD_BYTES each, by row group"""
+    """split the filtered file into data/train-XXXXX-of-YYYYY.parquet files of about SHARD_BYTES each (on disk).
+
+    It streams record batches, so a large row group never has to fit in memory. While it writes, the disk holds the
+    filtered file and the shards; when the free space is too small for that, the file is uploaded as one shard."""
     import pyarrow.parquet as pq
     pf = pq.ParquetFile(path)
-    n_out = pf.metadata.num_rows
-    groups, cur, size = [], [], 0
-    for i in range(pf.num_row_groups):
-        cur.append(i); size += pf.metadata.row_group(i).total_byte_size
-        if size >= SHARD_BYTES:
-            groups.append(cur); cur, size = [], 0
-    if cur or not groups:
-        groups.append(cur)
+    n_out, size = pf.metadata.num_rows, os.path.getsize(path)
+    n_shards = max(1, round(size / SHARD_BYTES))
     out_dir.mkdir(parents=True, exist_ok=True)
-    for k, g in enumerate(groups):
-        dst = out_dir / f"train-{k:05d}-of-{len(groups):05d}.parquet"
-        if len(groups) == 1:
-            shutil.move(path, dst)
-            break
-        with pq.ParquetWriter(dst, pf.schema_arrow, compression="zstd") as w:
-            for i in g:
-                w.write_table(pf.read_row_group(i))
-    return n_out, len(groups)
+    if n_shards > 1 and shutil.disk_usage(out_dir).free < 1.2 * size:
+        log(f"not enough free disk to split {size / 1024**3:.1f} GB into shards: one shard")
+        n_shards = 1
+    if n_shards == 1:
+        shutil.move(path, out_dir / "train-00000-of-00001.parquet")
+        return n_out, 1
+    per = -(-n_out // n_shards)   # rows per shard
+    k, w, rows = 0, None, 0
+    for batch in pf.iter_batches(batch_size=10_000):
+        while batch.num_rows:
+            if w is None:
+                w = pq.ParquetWriter(out_dir / f"train-{k:05d}-of-{n_shards:05d}.parquet", pf.schema_arrow, compression="zstd")
+            take = min(per - rows, batch.num_rows)
+            w.write_batch(batch.slice(0, take)); batch = batch.slice(take); rows += take
+            if rows == per:
+                w.close(); w, rows, k = None, 0, k + 1
+    if w is not None:
+        w.close(); k += 1
+    os.remove(path)
+    if k != n_shards:   # rename to the true count (the last shards can be empty when rows are few)
+        for i in range(k):
+            os.replace(out_dir / f"train-{i:05d}-of-{n_shards:05d}.parquet", out_dir / f"train-{i:05d}-of-{k:05d}.parquet")
+    return n_out, k
 
 
 def card(a, revision, files, n_in, n_out, engine_version, seconds):
@@ -155,10 +180,17 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="filter and report, but do not push")
     a = ap.parse_args()
 
-    from huggingface_hub import HfApi
+    from huggingface_hub import HfApi, get_token
     api = HfApi()
-    revision = a.revision or api.dataset_info(a.dataset).sha
-    files, urls = input_urls(api, a.dataset, revision, a.include)
+    if a.memory_limit and not re.fullmatch(r"\d+(\.\d+)?\s*[KMGT]i?B", a.memory_limit):
+        raise SystemExit(f"--memory-limit must look like 24GB, not {a.memory_limit!r}")
+    token = get_token()
+    # an existing repo keeps its visibility: never push into a public one without --public
+    if (not a.dry_run and not a.public and api.repo_exists(a.output_repo, repo_type="dataset")
+            and not api.dataset_info(a.output_repo).private):
+        raise SystemExit(f"{a.output_repo} exists and is public: pass --public to push into it, or choose another name")
+    revision = api.dataset_info(a.dataset, revision=a.revision).sha   # a branch or tag becomes one commit
+    files, urls = input_paths(api, a.dataset, revision, a.include)
     log(f"{a.dataset}@{revision}: {len(files)} files ({files[0]} ... {files[-1]})")
     log(f"engine {a.engine}, filter: {a.where}")
 
@@ -167,9 +199,9 @@ def main():
     t0 = time.time()
     tmp = str(OUT / "filtered.parquet")
     if a.engine == "polars":
-        n_in, version = run_polars(urls, a.where, a.columns, tmp)
+        n_in, version = run_polars(urls, a.where, a.columns, tmp, token)
     else:
-        n_in, version = run_duckdb(urls, a.where, a.columns, tmp, a.memory_limit, a.threads)
+        n_in, version = run_duckdb(urls, a.where, a.columns, tmp, a.memory_limit, a.threads, token)
     seconds = time.time() - t0
     n_out, n_shards = shard(tmp, OUT / "data")
     log(f"RESULT engine {a.engine} {version} input_rows {n_in} output_rows {n_out} ({100 * n_out / max(n_in, 1):.3f} %) "
