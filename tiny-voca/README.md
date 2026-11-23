@@ -15,22 +15,24 @@ One full run (`README recipe, one phase`), compared with the released checkpoint
 | split | model | WER | duration ratio | pause ratio | mel DTW |
 |---|---|---|---|---|---|
 | test (594 clips) | ours | 1.26 % | 0.986 | 1.13 | 0.733 |
-| | released | 1.33 % | 0.956 | 1.05 | 0.731 |
-| | source recordings | 0.98 % | | | |
-| validation (600 draws) | ours | 0.74 % | 1.002 | 1.15 | 0.741 |
-| | released | 0.81 % | 0.970 | 1.06 | 0.741 |
-| | source recordings | 0.72 % | | | |
+| | released | 1.36 % | 0.956 | 1.05 | 0.731 |
+| | source recordings | 1.14 % | | | |
+| validation (600 draws) | ours | 0.75 % | 1.002 | 1.15 | 0.741 |
+| | released | 0.82 % | 0.970 | 1.06 | 0.741 |
+| | source recordings | 0.64 % | | | |
 
 Per voice, on the test split:
 
 | voice | WER ours | WER released | WER source |
 |---|---|---|---|
-| F2 (296 clips) | 1.28 % | 1.25 % | 1.01 % |
-| M2 (298 clips) | 1.24 % | 1.41 % | 0.94 % |
+| F2 (296 clips) | 1.27 % | 1.31 % | 1.18 % |
+| M2 (298 clips) | 1.26 % | 1.41 % | 1.10 % |
 
 What the numbers show:
 
-- WER and mel distance are close to the released checkpoint's.
+- WER and mel distance are close to the released checkpoint's. The differences are within the evaluation noise: a first
+  evaluation of the same two checkpoints, in another Job, gave WERs up to 0.17 points different (for example 1.33 % for
+  the released model and 0.98 % for the source recordings on the test split).
 - Our model's pauses are about 8 % longer than the released model's, on every split. Its total duration is closer to the
   source recordings.
 - This is one run with one seed. The upstream evaluation notes that these numbers support a listening test and do not
@@ -55,7 +57,8 @@ README on the current data. Our data stage keeps the same clips as the released 
 the same 16,018 train, 714 validation and 594 test clip ids.
 
 The tested run used `RUN=repro-rtx-pro-6000`. In that run, the upload of the evaluation audio (about 7,200 small files)
-failed with a rate-limit error (HTTP 429). A second `run.sh eval` Job finished and uploaded everything. The script now
+failed with a rate-limit error (HTTP 429). A second `run.sh eval` Job finished and uploaded everything. The tables above are from that second Job: they match the
+reports in the bucket. The script now
 retries every bucket transfer and packs the evaluation audio into one tar file per model. A smoke test of the current
 script passed (`STAGE-DONE all`; the evaluation upload took 15 s).
 

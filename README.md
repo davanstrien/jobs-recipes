@@ -23,7 +23,7 @@ Each recipe is one folder with:
 
 | recipe | what you get | hardware, time, cost |
 |---|---|---|
-| [decision-model](decision-model/) | a fine-tuned Kev-4B decision model that answers one question about a text with your labels, pushed with a model card | 1 × A100 (`a100-large`), 78 min for 2,000 records, about $3.25 |
+| [decision-model](decision-model/) | a fine-tuned Kev-4B decision model that answers one question about a text with your labels, pushed with a model card | 1 × A100 (`a100-large`), 78 min for 2,000 records, about $3.30 |
 | [filter-dataset](filter-dataset/) | a filtered subset of a large Hub dataset, pushed as a new dataset; one SQL expression, Polars or DuckDB | 1 CPU Job (`cpu-upgrade`), 6 min for 97M FineWeb-Edu rows, under $0.01 |
 | [tiny-voca](tiny-voca/) | a 4.5M-parameter English TTS model with two voices, trained from scratch; WER close to the released checkpoint in one tested run | 1 × RTX PRO 6000, about 5.5 h, about $15 |
 

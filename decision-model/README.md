@@ -31,10 +31,10 @@ does this message express?".
 - The released model is already good at this task; fine-tuning adds 4.8 points. Kev's calibration step fits one
   temperature (1.91 here) on the development records; the out-of-fold check (row 3) shows that it lowers the
   calibration error from 0.077 to 0.022.
-- Full run: 78 min on `a100-large` (training 2 epochs at about 1.06 s per record, then both benchmarks), about $3.25.
+- Full run: 78 min on `a100-large` (training 2 epochs at about 1.06 s per record, then both benchmarks), about $3.30.
   Smoke test (`--max-steps 5`): 8.5 min, about $0.35; most of it is the two benchmarks, so it scales with the
   development records (4 min for 300 records in another test). Prepare and publish: under a minute each on `cpu-basic`.
-- The model is [davanstrien/kev-banking77](https://huggingface.co/davanstrien/kev-banking77) (private for now).
+- The model is [davanstrien/kev-banking77](https://huggingface.co/davanstrien/kev-banking77).
 
 ## Before you start
 
@@ -59,7 +59,7 @@ hf jobs uv run --flavor cpu-basic --timeout 30m --secrets HF_TOKEN -v $B:/mnt/ke
 hf jobs uv run --flavor a100-large --timeout 1h --secrets HF_TOKEN -v $B:/mnt/kev $TRAIN \
     /mnt/kev/banking77 /mnt/kev/runs/banking77-smoke --max-steps 5
 
-# 2b. full training (78 min for 2,000 records × 2 epochs, about $3.25)
+# 2b. full training (78 min for 2,000 records × 2 epochs, about $3.30)
 hf jobs uv run --flavor a100-large --timeout 2h --secrets HF_TOKEN -v $B:/mnt/kev $TRAIN \
     /mnt/kev/banking77 /mnt/kev/runs/banking77-v1
 

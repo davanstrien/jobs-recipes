@@ -11,7 +11,7 @@ an agent that runs the recipe for a user.
    one (keep `test` for a final check), else `test`, else `--dev-split none --n-dev <n>`. Agree the record counts
    (`--n-train`, `--n-dev`): training time and cost grow with `--n-train`.
 3. Their bucket (`hf://buckets/<user>/<bucket>`), the model repo name, and a budget. Typical: under $1 for prepare and
-   the smoke test, about $3.25 for a full run of 2,000 records × 2 epochs on `a100-large` ($2.50 per hour; check with
+   the smoke test, about $3.30 for a full run of 2,000 records × 2 epochs on `a100-large` ($2.50 per hour; check with
    `hf jobs hardware`). Training takes about 1 s per record per epoch.
 
 ## Procedure
