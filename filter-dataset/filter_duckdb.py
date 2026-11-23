@@ -75,7 +75,7 @@ def run_duckdb(urls, where, columns, out, memory_limit, threads, token):
         con.execute(f"SET memory_limit={lit(memory_limit)};")
     if threads:
         con.execute(f"SET threads={int(threads)};")
-    src = "read_parquet([" + ", ".join(lit(u) for u in urls) + "])"
+    src = "read_parquet([" + ", ".join(lit(u) for u in urls) + "], union_by_name = true)"   # files may differ in columns
     n_in = con.execute(f"SELECT count(*) FROM {src}").fetchone()[0]   # from the parquet footers
     cols = ", ".join(ident(c) for c in columns) if columns else "*"
     con.execute(f"COPY (SELECT {cols} FROM {src} WHERE {where}) TO {lit(out)} (FORMAT parquet, COMPRESSION zstd)")
@@ -162,7 +162,7 @@ def main():
                     help="threads (default: $CPU_CORES on Jobs, else DuckDB's own)")
     ap.add_argument("--output-repo", required=True, help="dataset repo to create or update")
     ap.add_argument("--public", action="store_true", help="create the output repo public (default: private)")
-    ap.add_argument("--dry-run", action="store_true", help="filter and report, but do not push")
+    ap.add_argument("--no-push", action="store_true", help="filter and report, but do not push")
     a = ap.parse_args()
 
     from huggingface_hub import HfApi, get_token
@@ -171,7 +171,7 @@ def main():
         raise SystemExit(f"--memory-limit must look like 24GB, not {a.memory_limit!r}")
     token = get_token()
     # an existing repo keeps its visibility: never push into a public one without --public
-    if (not a.dry_run and not a.public and api.repo_exists(a.output_repo, repo_type="dataset")
+    if (not a.no_push and not a.public and api.repo_exists(a.output_repo, repo_type="dataset")
             and not api.dataset_info(a.output_repo).private):
         raise SystemExit(f"{a.output_repo} exists and is public: pass --public to push into it, or choose another name")
     revision = api.dataset_info(a.dataset, revision=a.revision).sha   # a branch or tag becomes one commit
@@ -189,8 +189,8 @@ def main():
     log(f"RESULT engine {ENGINE} {version} input_rows {n_in} output_rows {n_out} ({100 * n_out / max(n_in, 1):.3f} %) "
         f"shards {n_shards} filter_seconds {seconds:.0f} peak_memory_gb {peak_gb():.1f}")
     (OUT / "README.md").write_text(card(a, revision, files, n_in, n_out, version, seconds))
-    if a.dry_run:
-        log("dry run: not pushed")
+    if a.no_push:
+        log("--no-push: not pushed")
         return
     api.create_repo(a.output_repo, repo_type="dataset", private=not a.public, exist_ok=True)
     api.upload_folder(repo_id=a.output_repo, repo_type="dataset", folder_path=OUT, allow_patterns=["README.md", "data/*"],

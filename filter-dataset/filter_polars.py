@@ -58,11 +58,15 @@ def run_polars(urls, where, columns, out, token):
         os.environ.setdefault("POLARS_MAX_THREADS", os.environ["CPU_CORES"])
     import polars as pl
     lf = pl.scan_parquet(urls, storage_options={"token": token} if token else None)
-    n_in = lf.select(pl.len()).collect().item()   # from the parquet footers
-    lf = lf.filter(pl.sql_expr(where))
-    if columns:
-        lf = lf.select(columns)
-    lf.sink_parquet(out, compression="zstd", engine="streaming")
+    try:
+        n_in = lf.select(pl.len()).collect().item()   # from the parquet footers
+        lf = lf.filter(pl.sql_expr(where))
+        if columns:
+            lf = lf.select(columns)
+        lf.sink_parquet(out, compression="zstd", engine="streaming")
+    except pl.exceptions.SchemaError as e:
+        raise SystemExit(f"the input files do not all have the same columns ({e}). Narrow --include to files with one "
+                         "schema (e.g. one split), or use filter_duckdb.py, which merges columns by name.") from e
     return n_in, pl.__version__
 
 
@@ -143,14 +147,14 @@ def main():
     ap.add_argument("--columns", nargs="*", default=None, help="columns to keep (default: all)")
     ap.add_argument("--output-repo", required=True, help="dataset repo to create or update")
     ap.add_argument("--public", action="store_true", help="create the output repo public (default: private)")
-    ap.add_argument("--dry-run", action="store_true", help="filter and report, but do not push")
+    ap.add_argument("--no-push", action="store_true", help="filter and report, but do not push")
     a = ap.parse_args()
 
     from huggingface_hub import HfApi, get_token
     api = HfApi()
     token = get_token()
     # an existing repo keeps its visibility: never push into a public one without --public
-    if (not a.dry_run and not a.public and api.repo_exists(a.output_repo, repo_type="dataset")
+    if (not a.no_push and not a.public and api.repo_exists(a.output_repo, repo_type="dataset")
             and not api.dataset_info(a.output_repo).private):
         raise SystemExit(f"{a.output_repo} exists and is public: pass --public to push into it, or choose another name")
     revision = api.dataset_info(a.dataset, revision=a.revision).sha   # a branch or tag becomes one commit
@@ -168,8 +172,8 @@ def main():
     log(f"RESULT engine {ENGINE} {version} input_rows {n_in} output_rows {n_out} ({100 * n_out / max(n_in, 1):.3f} %) "
         f"shards {n_shards} filter_seconds {seconds:.0f} peak_memory_gb {peak_gb():.1f}")
     (OUT / "README.md").write_text(card(a, revision, files, n_in, n_out, version, seconds))
-    if a.dry_run:
-        log("dry run: not pushed")
+    if a.no_push:
+        log("--no-push: not pushed")
         return
     api.create_repo(a.output_repo, repo_type="dataset", private=not a.public, exist_ok=True)
     api.upload_folder(repo_id=a.output_repo, repo_type="dataset", folder_path=OUT, allow_patterns=["README.md", "data/*"],

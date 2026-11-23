@@ -13,12 +13,13 @@ an agent that runs the recipe for a user.
 
 ## Procedure
 
-Run the commands from the root of this repository. Run each stage as its own Job, with the timeout below. Check its
+Run the commands from the root of this repository, with `--detach`, and follow each Job with `hf jobs inspect` and
+`hf jobs logs` (root README, "Watch, cost and stop a Job"). Run each stage as its own Job, with the timeout below. Check its
 output before you start the next one. Do not use `run.sh all` for a full run: it goes on to training without your check.
 
 | step | run | timeout | check before going on |
 |---|---|---|---|
-| smoke | `run.sh all` with `-e SMOKE=1` (and a new `-e RUN=smoke-<date>` for each smoke test) | 1h | the log ends with `STAGE-DONE all`; `$TV_BUCKET/$RUN/export/tiny-voca-$RUN.onnx` exists |
+| smoke | `run.sh all` with `-e SMOKE=1` (and a new `-e RUN=smoke-<date>` for each smoke test) | 1h | the log ends with `STAGE-DONE all`; `$TV_BUCKET/$RUN/export/tiny-voca-$RUN.onnx` exists. The smoke data has 1,231 / 16 / 10 annotated clips, not the full counts below. |
 | data | `run.sh data` | 1h | the log lines `annotated train: 16018 clips`, `validation: 714`, `test: 594`, then `data done` |
 | train | `run.sh train` | 8h | `train done`; `runs/<run>/inference.pt` is in the bucket |
 | eval | `run.sh eval` | 2h | `eval done`; two `RESULT` lines, the first for the user's run, the second for `released` |
@@ -55,4 +56,5 @@ Read the two `RESULT` lines of the eval log (or `eval/<run>/report.json` and `ev
 - Keep the user's bucket private unless they say otherwise.
 - Use the upstream code at the pinned commits; `run.sh` installs it. Do not copy it into the repository.
 - A model that the user publishes from this recipe uses the tiny-voca dataset (CC BY 4.0): tell them to credit it.
-- Log what you launched (Job ids, flavor, time, cost) for the user.
+- Log what you launched (Job ids, flavor, time, cost) for the user. Cost = running time × the flavor's price.
+- A smoke test that reuses a `RUN` name reuses its data in the bucket; use a new name to test the data stage again.

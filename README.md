@@ -25,8 +25,23 @@ Each recipe is one folder with:
 - The `hf` CLI (`pip install -U huggingface_hub`), logged in with a token that can write.
 - For recipes that keep state: a bucket, `hf buckets create <you>/<bucket> --private`.
 
-Run the commands from the root of this repository: each command mounts its recipe folder into the Job with
-`-v ./<recipe>:/scripts:ro`.
+Run the commands from the root of this repository. A recipe made of one uv script runs it with `hf jobs uv run
+<recipe>/<script>.py`, which uploads the local script for you. A recipe with several files mounts its folder into the
+Job with `-v ./<recipe>:/scripts:ro`. Each recipe's README gives its exact commands.
+
+`hf jobs uv run` has options of its own. For example, its `--dry-run` prints the Job and does not submit it, even when
+it comes after the script path. The scripts in this repository do not use option names that the CLI uses.
+
+## Watch, cost and stop a Job
+
+- `hf jobs run` and `hf jobs uv run` stream the log and wait. Add `--detach` to get the Job id at once; an agent should
+  do this, so it can check the Job and stop it.
+- `hf jobs ps -a` lists your Jobs, `hf jobs logs <id>` prints the log, `hf jobs inspect <id>` gives the status and the
+  running time, and `hf jobs cancel <id>` stops a Job.
+- Cost = running time × the flavor's price per hour (`hf jobs hardware`).
+- `--secrets HF_TOKEN` passes your token to the Job: from the `HF_TOKEN` variable, or else from `hf auth login`.
+- A local folder in `-v` (for example `-v ./tiny-voca:/scripts:ro`) and a local script in `hf jobs uv run` are first
+  copied to a bucket in your namespace (`<you>/jobs-artifacts`), which the Job mounts.
 
 ## Add a recipe
 

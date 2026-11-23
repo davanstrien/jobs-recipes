@@ -11,12 +11,16 @@ the stop rules for an agent that runs the recipe for a user.
 
 ## Procedure
 
-1. **Look at the data.** Read the dataset card and list the parquet files (`hf datasets info <id>`, or
-   `HfApi().list_repo_files`). Check the column names and types that the filter uses. If the dataset has no parquet
-   files, stop: this recipe reads parquet only.
-2. **Test the filter.** Run `filter_polars.py` with `--dry-run`, `--flavor cpu-upgrade` and a small `--include` (one file or one
+1. **Look at the data.** Read the dataset card and list the parquet files (`HfApi().list_repo_files`). Many large
+   datasets have one folder per config (language, dump, ...) with split folders inside, and some have folders of
+   removed or rejected rows (for example FineWeb-2's `data/<lang>_removed/`). Use the card to choose the folders that
+   the user means, and say which ones you chose. Check the column names and types of one file, for example
+   `uv run --with polars python -c "import polars as pl; print(pl.scan_parquet('hf://datasets/<id>/<file>').head(3).collect())"`
+   (the dataset viewer API can fail for very large datasets). If the dataset has no parquet files, stop: this recipe
+   reads parquet only.
+2. **Test the filter.** Run `filter_polars.py` with `--no-push`, `--flavor cpu-upgrade` and a small `--include` (one file or one
    folder). Check the `RESULT` line: `output_rows` is more than 0 and the share is what the user expects. Show the user
-   the share. To show them example rows, run the same small test without `--dry-run` into a private test repo and read
+   the share. To show them example rows, run the same small test without `--no-push` into a private test repo and read
    3-5 rows from it.
 3. **Choose the flavor and script** for the full run from the Polars test's `peak_memory_gb` and the size of the full
    input (README, "Choose an engine"). The Polars peak grows with the input, but less than the input (2.1 GB at 10BT,
@@ -29,7 +33,7 @@ the stop rules for an agent that runs the recipe for a user.
 
 If the user needs more than one filter expression (a new column, a join, a sample), copy the script for the engine and
 change its `run_polars()` or `run_duckdb()`. Keep the rest (inputs, shards, card, push) as it is, and test the copy with
-`--dry-run` on a small `--include`.
+`--no-push` on a small `--include`.
 
 ## Stop and ask the user when
 
@@ -45,4 +49,6 @@ change its `run_polars()` or `run_duckdb()`. Keep the rest (inputs, shards, card
 - Keep the output repo private unless the user says otherwise.
 - Pin `--revision` for a run that the user wants to reproduce; the default (current head) is written to the output card.
 - The source dataset's licence and terms apply to the subset. Tell the user before they make the output public.
-- Log what you launched (Job ids, flavor, time, cost) for the user.
+- Launch with `--detach` and follow the Job with `hf jobs inspect` and `hf jobs logs` (root README, "Watch, cost and
+  stop a Job").
+- Log what you launched (Job ids, flavor, time, cost) for the user. Cost = running time × the flavor's price.

@@ -61,14 +61,18 @@ output is pushed as one file.
 |---|---|---|
 | `--dataset` | required | source dataset repo id |
 | `--revision` | current head | a commit, branch or tag; it is resolved to one commit, which is read and written to the output card |
-| `--include` | all parquet files | one or more globs of parquet paths in the repo, e.g. `"data/fra_Latn/*.parquet"` |
+| `--include` | all parquet files | one or more globs of parquet paths in the repo, e.g. `"data/fra_Latn/train/*.parquet"`. A `*` also matches `/`, so `"data/*.parquet"` takes every subfolder. |
 | `--where` | required | the SQL filter expression. It must work in both Polars (`pl.sql_expr`) and DuckDB |
 | `--columns` | all | columns to keep |
 | `--memory-limit` | DuckDB's own (80 % of memory) | `filter_duckdb.py` only, e.g. `24GB` |
 | `--threads` | `$CPU_CORES` on Jobs | `filter_duckdb.py` only. `filter_polars.py` also uses `$CPU_CORES` (unless `POLARS_MAX_THREADS` is set). |
 | `--output-repo` | required | the dataset repo to create or update; its `data/` files are replaced |
 | `--public` | off | create the output repo public. It does not change an existing repo's visibility. |
-| `--dry-run` | off | filter and print the `RESULT` line, but do not push |
+| `--no-push` | off | filter and print the `RESULT` line, but do not push |
+
+The files that `--include` selects must have the same columns for `filter_polars.py`. If they do not (for example a
+`train` and a `test` split with different columns), it stops with a message: narrow `--include`, or use
+`filter_duckdb.py`, which merges the columns by name and fills the missing ones with null.
 
 ## Output
 
@@ -93,7 +97,7 @@ The expression is SQL. These work in both scripts:
 - text: `length(text) > 2000`, `url LIKE '%.ac.uk/%'`
 - nulls: `title IS NOT NULL`
 
-Test a new filter on a small `--include` with `--dry-run` first. A column or function that an engine does not know
+Test a new filter on a small `--include` with `--no-push` first. A column or function that an engine does not know
 makes the run fail early, with the engine's error.
 
 ## Notes
