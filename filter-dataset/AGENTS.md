@@ -1,0 +1,44 @@
+# Agent guide: filter a large dataset on Hugging Face Jobs
+
+Read `README.md` in this folder first; it has the command and the options. This file is the procedure, the checks and
+the stop rules for an agent that runs the recipe for a user.
+
+## Ask the user before you start
+
+1. The source dataset and which part of it (a config, a folder, a language), so you can set `--include`.
+2. What to keep, in their words. Write the `--where` expression from it and show it to them.
+3. The output repo name, and whether it may be public (default: private).
+
+## Procedure
+
+1. **Look at the data.** Read the dataset card and list the parquet files (`hf datasets info <id>`, or
+   `HfApi().list_repo_files`). Check the column names and types that the filter uses. If the dataset has no parquet
+   files, stop: this recipe reads parquet only.
+2. **Test the filter.** Run the command with `--dry-run`, `--flavor cpu-upgrade` and a small `--include` (one file or one
+   folder). Check the `RESULT` line: `output_rows` is more than 0 and the share is what the user expects. Show the user
+   the share. To show them example rows, run the same small test without `--dry-run` into a private test repo and read
+   3-5 rows from it.
+3. **Choose the flavor and engine** for the full run from the Polars test's `peak_memory_gb` and the size of the full
+   input (README, "Choose an engine"). The Polars peak grows with the input, but less than the input (2.1 GB at 10BT,
+   10.9 GB at 100BT). If the full input is more than about 10 times the test, run a second, larger test first. Do not
+   use DuckDB's `peak_memory_gb` for this: DuckDB fills memory up to its limit.
+4. **Run the full filter** with a `--timeout` that fits: start from the test's `filter_seconds`, scaled by the input
+   size, and double it.
+5. **Check the result.** The log ends with `RESULT` and `pushed`. The output repo's README has the counts. Report the
+   input rows, output rows, share, time and cost to the user.
+
+## Stop and ask the user when
+
+- the filter expression fails (a column name or function that does not exist): show the error and propose a fix
+- the test keeps 0 rows, or a share very different from what the user expects
+- a Job is killed for memory (`Killed`, exit code 137, or the log stops with no `RESULT`): offer `--engine duckdb` or a
+  larger flavor
+- the full run would cost more than the user agreed (CPU flavors: `hf jobs hardware`)
+- a Job waits in SCHEDULING for more than 10 minutes (offer another flavor)
+
+## Rules
+
+- Keep the output repo private unless the user says otherwise.
+- Pin `--revision` for a run that the user wants to reproduce; the default (current head) is written to the output card.
+- The source dataset's licence and terms apply to the subset. Tell the user before they make the output public.
+- Log what you launched (Job ids, flavor, time, cost) for the user.

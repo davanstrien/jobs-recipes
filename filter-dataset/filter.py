@@ -1,0 +1,188 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["polars>=2.1", "duckdb>=1.5", "pyarrow>=18", "huggingface_hub>=1.0"]
+# ///
+"""Filter a large Hugging Face dataset on a Job and push the result as a new dataset.
+
+The filter is one SQL expression, for example "int_score >= 4 AND token_count >= 4000". Both engines run the same
+expression: Polars (pl.sql_expr) or DuckDB (WHERE). The input parquet files are read over HTTP at a pinned revision,
+so nothing is downloaded first.
+
+  - polars (default): streaming scan and sink. Fast; use it when the job's memory is about 2-3 times the peak that a
+    small test run shows.
+  - duckdb: out-of-core; spills to disk, so it also works when the data does not fit in memory. Slower.
+
+Output: <output-repo> (private unless --public) with data/train-*.parquet and a README that records the source, the
+revision, the filter, the engine and the row counts.
+
+    hf jobs uv run --flavor cpu-upgrade --timeout 1h --secrets HF_TOKEN filter-dataset/filter.py \\
+        --dataset HuggingFaceFW/fineweb-edu --include "sample/10BT/*.parquet" \\
+        --where "int_score >= 4 AND token_count >= 4000 AND language_score >= 0.95" \\
+        --output-repo <you>/fineweb-edu-long-hq
+"""
+import argparse
+import fnmatch
+import json
+import os
+import resource
+import shutil
+import sys
+import time
+from pathlib import Path
+
+OUT = Path("/tmp/filter-out")
+SHARD_BYTES = 500 * 1024**2  # output shards of about this size
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+def peak_gb():
+    """peak resident memory of this process, in GB (Linux reports KB, macOS bytes)"""
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024**3 if sys.platform == "darwin" else 1024**2)
+
+
+def input_urls(api, dataset, revision, include):
+    files = sorted(f for f in api.list_repo_files(dataset, repo_type="dataset", revision=revision)
+                   if f.endswith(".parquet") and any(fnmatch.fnmatch(f, p) for p in include))
+    if not files:
+        raise SystemExit(f"no parquet files in {dataset}@{revision} match {include}")
+    return files, [f"https://huggingface.co/datasets/{dataset}/resolve/{revision}/{f}" for f in files]
+
+
+def run_polars(urls, where, columns, out):
+    # a Job reports the host's CPUs; CPU_CORES is what the Job may use
+    if os.environ.get("CPU_CORES"):
+        os.environ.setdefault("POLARS_MAX_THREADS", os.environ["CPU_CORES"])
+    import polars as pl
+    lf = pl.scan_parquet(urls)
+    n_in = lf.select(pl.len()).collect().item()   # from the parquet footers
+    lf = lf.filter(pl.sql_expr(where))
+    if columns:
+        lf = lf.select(columns)
+    lf.sink_parquet(out, compression="zstd", engine="streaming")
+    return n_in, pl.__version__
+
+
+def run_duckdb(urls, where, columns, out, memory_limit, threads):
+    import duckdb
+    con = duckdb.connect()
+    con.execute("INSTALL httpfs; LOAD httpfs;")
+    con.execute("SET preserve_insertion_order=false;")   # lets COPY stream
+    con.execute("SET temp_directory='/tmp/duckdb-spill';")
+    if memory_limit:
+        con.execute(f"SET memory_limit='{memory_limit}';")
+    if threads:
+        con.execute(f"SET threads={threads};")
+    src = "read_parquet([" + ", ".join(f"'{u}'" for u in urls) + "])"
+    n_in = con.execute(f"SELECT count(*) FROM {src}").fetchone()[0]   # from the parquet footers
+    cols = ", ".join(f'"{c}"' for c in columns) if columns else "*"
+    con.execute(f"COPY (SELECT {cols} FROM {src} WHERE {where}) TO '{out}' (FORMAT parquet, COMPRESSION zstd)")
+    return n_in, duckdb.__version__
+
+
+def shard(path, out_dir):
+    """split one parquet file into data/train-XXXXX-of-YYYYY.parquet files of about SHARD_BYTES each, by row group"""
+    import pyarrow.parquet as pq
+    pf = pq.ParquetFile(path)
+    n_out = pf.metadata.num_rows
+    groups, cur, size = [], [], 0
+    for i in range(pf.num_row_groups):
+        cur.append(i); size += pf.metadata.row_group(i).total_byte_size
+        if size >= SHARD_BYTES:
+            groups.append(cur); cur, size = [], 0
+    if cur or not groups:
+        groups.append(cur)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for k, g in enumerate(groups):
+        dst = out_dir / f"train-{k:05d}-of-{len(groups):05d}.parquet"
+        if len(groups) == 1:
+            shutil.move(path, dst)
+            break
+        with pq.ParquetWriter(dst, pf.schema_arrow, compression="zstd") as w:
+            for i in g:
+                w.write_table(pf.read_row_group(i))
+    return n_out, len(groups)
+
+
+def card(a, revision, files, n_in, n_out, engine_version, seconds):
+    meta = {"source": a.dataset, "revision": revision, "include": a.include, "where": a.where, "columns": a.columns,
+            "engine": f"{a.engine} {engine_version}", "input_files": len(files), "input_rows": n_in, "output_rows": n_out,
+            "seconds": round(seconds)}
+    return f"""---
+configs:
+- config_name: default
+  data_files: data/*.parquet
+tags:
+- filtered
+---
+
+# {a.output_repo.split('/')[-1]}
+
+A filtered subset of [{a.dataset}](https://huggingface.co/datasets/{a.dataset}) at revision `{revision}`.
+Read the source dataset's card for its licence and terms; they apply to this subset.
+
+| | |
+|---|---|
+| input files | `{', '.join(a.include)}` ({len(files)} files) |
+| filter | `{a.where}` |
+| columns | {', '.join(f'`{c}`' for c in a.columns) if a.columns else 'all'} |
+| rows | {n_out:,} of {n_in:,} ({100 * n_out / max(n_in, 1):.3f} %) |
+| engine | {a.engine} {engine_version} |
+
+Made with `filter-dataset/filter.py` from Jobs recipes on Hugging Face Jobs.
+
+```json
+{json.dumps(meta, indent=1)}
+```
+"""
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dataset", required=True, help="source dataset repo id")
+    ap.add_argument("--revision", default=None, help="commit to read (default: the current head, resolved and logged)")
+    ap.add_argument("--include", nargs="+", default=["*.parquet", "**/*.parquet"], help="glob(s) of parquet files in the repo")
+    ap.add_argument("--where", required=True, help="SQL filter expression, the same for both engines")
+    ap.add_argument("--columns", nargs="*", default=None, help="columns to keep (default: all)")
+    ap.add_argument("--engine", choices=["polars", "duckdb"], default="polars")
+    ap.add_argument("--memory-limit", default="", help="duckdb only, e.g. 24GB (default: DuckDB's own, 80 %% of RAM)")
+    ap.add_argument("--threads", type=int, default=int(os.environ.get("CPU_CORES") or 0),
+                    help="duckdb only (default: $CPU_CORES on Jobs, else DuckDB's own)")
+    ap.add_argument("--output-repo", required=True, help="dataset repo to create or update")
+    ap.add_argument("--public", action="store_true", help="create the output repo public (default: private)")
+    ap.add_argument("--dry-run", action="store_true", help="filter and report, but do not push")
+    a = ap.parse_args()
+
+    from huggingface_hub import HfApi
+    api = HfApi()
+    revision = a.revision or api.dataset_info(a.dataset).sha
+    files, urls = input_urls(api, a.dataset, revision, a.include)
+    log(f"{a.dataset}@{revision}: {len(files)} files ({files[0]} ... {files[-1]})")
+    log(f"engine {a.engine}, filter: {a.where}")
+
+    shutil.rmtree(OUT, ignore_errors=True)
+    OUT.mkdir(parents=True)
+    t0 = time.time()
+    tmp = str(OUT / "filtered.parquet")
+    if a.engine == "polars":
+        n_in, version = run_polars(urls, a.where, a.columns, tmp)
+    else:
+        n_in, version = run_duckdb(urls, a.where, a.columns, tmp, a.memory_limit, a.threads)
+    seconds = time.time() - t0
+    n_out, n_shards = shard(tmp, OUT / "data")
+    log(f"RESULT engine {a.engine} {version} input_rows {n_in} output_rows {n_out} ({100 * n_out / max(n_in, 1):.3f} %) "
+        f"shards {n_shards} filter_seconds {seconds:.0f} peak_memory_gb {peak_gb():.1f}")
+    (OUT / "README.md").write_text(card(a, revision, files, n_in, n_out, version, seconds))
+    if a.dry_run:
+        log("dry run: not pushed")
+        return
+    api.create_repo(a.output_repo, repo_type="dataset", private=not a.public, exist_ok=True)
+    api.upload_folder(repo_id=a.output_repo, repo_type="dataset", folder_path=OUT, allow_patterns=["README.md", "data/*"],
+                      delete_patterns=["data/*"], commit_message=f"filter {a.dataset}@{revision[:8]}: {a.where}")
+    log(f"pushed https://huggingface.co/datasets/{a.output_repo}")
+
+
+if __name__ == "__main__":
+    main()

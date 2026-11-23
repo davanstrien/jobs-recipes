@@ -16,6 +16,7 @@ Each recipe is one folder with:
 
 | recipe | what you get | hardware, time, cost |
 |---|---|---|
+| [filter-dataset](filter-dataset/) | a filtered subset of a large Hub dataset, pushed as a new dataset; one SQL expression, Polars or DuckDB | 1 CPU Job (`cpu-upgrade`), 6 min for 97M FineWeb-Edu rows, under $0.01 |
 | [tiny-voca](tiny-voca/) | a 4.5M-parameter English TTS model with two voices, trained from scratch; WER close to the released checkpoint in one tested run | 1 × RTX PRO 6000, about 5.5 h, about $15 |
 
 ## Requirements

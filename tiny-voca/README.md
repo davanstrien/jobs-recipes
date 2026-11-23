@@ -55,8 +55,10 @@ The released checkpoint was trained in two phases: 66,000 steps on the first dat
 README on the current data. Our data stage keeps the same clips as the released annotations (dataset `annotations/v4`):
 the same 16,018 train, 714 validation and 594 test clip ids.
 
-The tested run used `RUN=repro-rtx-pro-6000`. Its final bucket upload failed with a rate-limit error (HTTP 429). The script
-now retries every bucket transfer and packs the evaluation audio into one tar file per model.
+The tested run used `RUN=repro-rtx-pro-6000`. In that run, the upload of the evaluation audio (about 7,200 small files)
+failed with a rate-limit error (HTTP 429). A second `run.sh eval` Job finished and uploaded everything. The script now
+retries every bucket transfer and packs the evaluation audio into one tar file per model. A smoke test of the current
+script passed (`STAGE-DONE all`; the evaluation upload took 15 s).
 
 ## Before you start
 
