@@ -65,7 +65,7 @@ output is pushed as one file.
 | `--where` | required | the SQL filter expression. It must work in both Polars (`pl.sql_expr`) and DuckDB |
 | `--columns` | all | columns to keep |
 | `--memory-limit` | DuckDB's own (80 % of memory) | `filter_duckdb.py` only, e.g. `24GB` |
-| `--threads` | `$CPU_CORES` on Jobs | `filter_duckdb.py` only. `filter_polars.py` also uses `$CPU_CORES` (unless `POLARS_MAX_THREADS` is set). |
+| `--threads` | DuckDB's own (the Job's CPUs) | `filter_duckdb.py` only |
 | `--output-repo` | required | the dataset repo to create or update; its `data/` files are replaced |
 | `--public` | off | create the output repo public. It does not change an existing repo's visibility. |
 | `--no-push` | off | filter and print the `RESULT` line, but do not push |
@@ -105,8 +105,6 @@ makes the run fail early, with the engine's error.
 
 - **Memory.** In earlier tests on FineWeb-Edu, Polars 2.0 and older ran out of memory on large filters; Polars 2.1 fixed
   this. The script requires Polars 2.1 or newer.
-- **CPU count.** A Job reports the host's CPUs. The script sets Polars' and DuckDB's thread counts to `$CPU_CORES`, the
-  CPUs the Job may use, by default.
 - **Very large inputs.** One Job reads at about 110-135 MB/s in earlier DuckDB tests, so the Job timeout limits the input
   size (about 2.6 TB in 6 hours). For more, run several Jobs on parts of the data (`--include` per part) into separate
   output repos.

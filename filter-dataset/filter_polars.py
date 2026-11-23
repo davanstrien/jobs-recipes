@@ -53,9 +53,6 @@ def input_paths(api, dataset, sha, include):
 
 
 def run_polars(urls, where, columns, out, token):
-    # a Job reports the host's CPUs; CPU_CORES is what the Job may use
-    if os.environ.get("CPU_CORES"):
-        os.environ.setdefault("POLARS_MAX_THREADS", os.environ["CPU_CORES"])
     import polars as pl
     lf = pl.scan_parquet(urls, storage_options={"token": token} if token else None)
     try:

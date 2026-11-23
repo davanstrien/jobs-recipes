@@ -5,8 +5,7 @@ Muhammed Nazeem, from scratch on [Hugging Face Jobs](https://huggingface.co/docs
 runs the upstream README's training steps: data preparation, alignment, training, evaluation and ONNX export. The state is
 kept in a [Hugging Face bucket](https://huggingface.co/docs/hub/storage-buckets), so a stopped run can resume.
 
-A full run takes about 5.5 h on one RTX PRO 6000 (`rtx-pro-6000`, $2.75 per hour; check the current price with
-`hf jobs hardware`) and costs about $15.
+Cost: about $15 for a full run (5.5 h on one `rtx-pro-6000` at $2.75 per hour; `hf jobs hardware` has current prices).
 
 ## Results
 
@@ -107,10 +106,8 @@ Or the whole chain in one Job, with `--timeout 8h` and `run.sh all`.
 | stage | what it does | time on RTX PRO 6000 | timeout |
 |---|---|---|---|
 | data | downloads the dataset (pinned revision), computes features with one process per CPU, aligns phonemes with wav2vec2, checks the clip counts, saves `features/` and `annotations/` | 21 min | 1h |
-| train | `tiny_voca.train`, 104,000 steps (GAN from step 8,000); saves `runs/<run>/` to the bucket every 10 minutes | 3 h 50 min | 8h |
+| train | `tiny_voca.train`, 104,000 steps (GAN from step 8,000); saves `runs/<run>/` to the bucket every 10 minutes | 3 h 50 min | 8h (caps the cost at about $22) |
 | eval | `tiny_voca.evaluate` for our checkpoint and for the released one, the ONNX export, then the upload | 1 h 10 min, plus the upload | 2h |
-
-The 8 h timeout limits a full run to about $22.
 
 ### Settings
 
@@ -167,12 +164,8 @@ fingerprint. The ONNX file works in the same way as `onnx/model.onnx` in the
 
 ## Notes
 
-- **CPU count.** A Job reports the host's CPU count, which can be higher than the CPUs it may use. `run.sh` reads the
-  container's CPU quota and starts one feature process per CPU (`prepare_sharded.py`).
 - **Other GPUs.** The full run was tested on `rtx-pro-6000` (about 7.2 training steps per second). Other flavors should
   work, but they are not tested. The evaluation runs Whisper on the CPU.
-- **Upstream cost.** The upstream project reports 7.7 h of training on one RTX 4090, and $9.56 of GPU time for the whole
-  project.
 - **Python packages.** The tiny-voca code, the phonemizer, the dataset and the released weights are pinned. torch and the
   other packages are not, so a later install can move the clip counts or the scores a little.
 - **Experimental: new voices.** `design_voice.py` makes voice designs with Qwen3-TTS VoiceDesign, the method that made the

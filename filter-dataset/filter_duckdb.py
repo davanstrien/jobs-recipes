@@ -166,8 +166,7 @@ def main():
     ap.add_argument("--where", required=True, help="SQL filter expression")
     ap.add_argument("--columns", nargs="*", default=None, help="columns to keep (default: all)")
     ap.add_argument("--memory-limit", default="", help="e.g. 24GB (default: DuckDB's own, 80 %% of RAM)")
-    ap.add_argument("--threads", type=int, default=int(os.environ.get("CPU_CORES") or 0),
-                    help="threads (default: $CPU_CORES on Jobs, else DuckDB's own)")
+    ap.add_argument("--threads", type=int, default=0, help="threads (default: DuckDB's own, the CPUs the Job may use)")
     ap.add_argument("--output-repo", required=True, help="dataset repo to create or update")
     ap.add_argument("--public", action="store_true", help="create the output repo public (default: private)")
     ap.add_argument("--no-push", action="store_true", help="filter and report, but do not push")
