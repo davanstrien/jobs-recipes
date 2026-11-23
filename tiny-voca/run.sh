@@ -38,7 +38,9 @@ setup() {
   $HF download n4ze3m/tiny-voca --revision $MODEL_REV --include "phonemizer/*" --include tiny-voca.pt --local-dir $W/weights -q >/dev/null || fail "weights"
   nvidia-smi --query-gpu=name,memory.total --format=csv,noheader; log "setup done"
 }
-save() { log "save $*"; for d in "$@"; do $HF buckets sync $W/$d $BK/$d --exclude "*.tmp" >/dev/null || fail "save $d"; done; }
+# sync is idempotent, so a failed upload (e.g. 429 rate limit) is retried with a growing wait
+save() { log "save $*"; for d in "$@"; do for t in 1 2 3 4 5; do $HF buckets sync $W/$d $BK/$d --exclude "*.tmp" >/dev/null && break
+  [ $t = 5 ] && fail "save $d"; log "save $d: try $t failed, retry in $((t * 60)) s"; sleep $((t * 60)); done; done; }
 load() { log "load $*"; for d in "$@"; do mkdir -p $W/$d; $HF buckets sync $BK/$d $W/$d >/dev/null || fail "load $d"; done; }
 
 data() {
