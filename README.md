@@ -19,6 +19,10 @@ Each recipe is one folder with:
   [Hugging Face bucket](https://huggingface.co/docs/hub/storage-buckets) when a recipe has more than one step, so a
   stopped Job can resume.
 
+For one-script tasks such as OCR, classification, embeddings, transcription or batch inference with vLLM, see
+[uv-scripts](https://huggingface.co/uv-scripts): one-file recipes that run from their URL with `hf jobs uv run`. A
+recipe in this repository has several files or steps, a tested full run with its cost, and an `AGENTS.md`.
+
 ## Recipes
 
 | recipe | what you get | hardware, time, cost |
