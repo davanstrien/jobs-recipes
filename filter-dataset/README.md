@@ -23,9 +23,10 @@ FineWeb-Edu at revision `87f09149`, the filter above, on `cpu-upgrade` (8 vCPU, 
 |---|---|---|---|---|---|---|---|
 | `sample/10BT` (14 files) | polars | 9,672,101 | 17,423 (0.18 %) | 35-46 s | 44 s | 2.1 GB | under $0.01 |
 | `sample/10BT` (14 files) | duckdb | 9,672,101 | 17,423 (0.18 %) | 110-150 s | 2 min | 27.2 GB* | under $0.01 |
-| `sample/100BT` (140 files) | polars | 97,270,686 | 174,063 (0.18 %) | 257-457 s | 6 min | 10.9-11.5 GB | under $0.01 |
+| `sample/100BT` (140 files) | polars | 97,270,686 | 174,063 (0.18 %) | 257-457 s | 6-8 min | 10.6-11.5 GB | under $0.01 |
+| `sample/100BT` (140 files) | duckdb | 97,270,686 | 174,063 (0.18 %) | 1,804 s | 31 min | 28.5 GB* | about $0.02 |
 
-- Two or three runs each; the filter time and peak memory are the range. "Job time" is from start to push.
+- One to four runs each; the filter time and peak memory are the range. DuckDB on 100BT: one run. "Job time" is from start to push.
 - Both engines run the same filter expression and return the same rows.
 - Peak memory is the highest resident memory of the script's process, from the start to the end of the shard step.
 - \*DuckDB keeps data in its buffer pool up to its memory limit (80 % of the Job's memory by default) and spills to disk
