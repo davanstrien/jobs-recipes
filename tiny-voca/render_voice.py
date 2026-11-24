@@ -94,7 +94,7 @@ def main():
         rows = random.Random(args.seed).sample(rows, min(args.limit, len(rows)))
     rows.sort(key=lambda r: (len(r["text"]), r["id"]))   # similar lengths in a batch, as upstream
     jobs = [{"id": f"{r['text_id']}_{args.voice}", "row": r} for r in rows]
-    started, mirrored, counter = time.time(), 0.0, {"clips": 0, "since": None}
+    started, mirrored, counter, copied = time.time(), 0.0, {"clips": 0, "since": None}, None
 
     def summary(stage):
         payloads = [(s, json.loads(p)) for s, p in db.execute("SELECT status, payload FROM clips")]
@@ -119,14 +119,17 @@ def main():
         print(json.dumps(value), flush=True)
 
     def mirror(force=False):
-        nonlocal mirrored
+        nonlocal mirrored, copied
         if not args.mirror or not (force or time.time() - mirrored > args.mirror_every):
             return
         since, mirrored = mirrored, time.time()
         (args.mirror / "audio").mkdir(parents=True, exist_ok=True)
+        if copied is None:
+            copied = set(os.listdir(args.mirror / "audio"))
         for f in audio.iterdir():   # copy the clips written (or written again by a retry) since the last copy
-            if f.stat().st_mtime >= since - 5 or not (args.mirror / "audio" / f.name).exists():
+            if f.name not in copied or f.stat().st_mtime >= since - 5:
                 shutil.copyfile(f, args.mirror / "audio" / f.name)
+                copied.add(f.name)
         backup = sqlite3.connect(args.root / "state.backup.sqlite")   # a consistent copy, written in one piece
         db.backup(backup)
         backup.close()

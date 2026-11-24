@@ -58,3 +58,9 @@ Read the two `RESULT` lines of the eval log (or `eval/<run>/report.json` and `ev
 - A model that the user publishes from this recipe uses the tiny-voca dataset (CC BY 4.0): tell them to credit it.
 - Log what you launched (Job ids, flavor, time, cost) for the user. Cost = running time × the flavor's price.
 - A smoke test that reuses a `RUN` name reuses its data in the bucket; use a new name to test the data stage again.
+
+## New voices (experimental)
+
+`README.md`, section "A new voice (experimental)", has the steps. Before a full render (about 3.7 h, about $5.50 per voice
+on `a10g-large`), run `render_voice.py` with `--limit 50` and give the user 2-3 clips to check by ear. The Whisper screen
+checks the words, not the voice or the accent. Training with `VOICES` is not tested: tell the user before you start it.

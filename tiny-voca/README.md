@@ -175,8 +175,8 @@ fingerprint. The ONNX file works in the same way as `onnx/model.onnx` in the
 
 ## A new voice (experimental)
 
-This section is experimental. The design and render steps are tested on small samples. The training step with a third
-voice is not tested.
+This section is experimental. The design and render steps and the data stage with a third voice are tested on small
+samples. Training and evaluation with a third voice are not tested.
 
 The two released voices were made in three steps: design a voice from a text description, pick one clip, and read all
 the sentences in that voice. This recipe has the same steps.
@@ -232,7 +232,7 @@ The outputs are `summary.json`, `manifest.jsonl` and `review.jsonl` of each voic
 - The screen checks the words, not the accent. Listen to some clips to make sure that the accent is in the rendered
   audio, before you start the full render.
 
-**4. Train with the new voice (not tested).** `run.sh` takes two more variables:
+**4. Train with the new voice (experimental).** `run.sh` takes two more variables:
 
 | variable | example | meaning |
 |---|---|---|
@@ -245,6 +245,8 @@ Run the stages as in [Run it](#run-it), with a new `RUN` and the same `VOICES` f
   `tiny_voca.train`. The data stage prepares and aligns all voices again. It does not check the clip counts of the
   released data; it logs the clip count of each voice.
 - The eval stage scores the new model on all its voices. It scores the released model on F2 and M2 only.
+- A smoke test of the data stage (`SMOKE=1`, `VOICES=F2,M2,S1`, 99 rendered S1 clips) passed: it annotated 1,318 / 24 / 14
+  clips: the F2 and M2 counts of the two-voice smoke test (1,231 / 16 / 10) and all 99 S1 clips.
 - `patches/infer-voices.patch` lets `tiny_voca.infer --voice` take any voice of the checkpoint (the pinned upstream code
   takes F2 or M2 only). `run.sh` applies it in the Job. To speak with the model on your computer, apply it after the
   install: go to the `site-packages` folder that holds `tiny_voca`, then `git apply -p1 <this folder>/patches/infer-voices.patch`.
