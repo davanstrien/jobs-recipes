@@ -87,6 +87,7 @@ tags:
 - kev
 - decision-model
 - jobs-recipes
+- hf_jobs
 ---
 
 # {a.repo.split('/')[-1]}
