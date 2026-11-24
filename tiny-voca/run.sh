@@ -7,6 +7,8 @@
 # Stages: data (download, features, alignment) | train | eval (scores + ONNX) | all. SMOKE=1: two input files per split and
 # 300 training steps, to check the whole chain in a few minutes. Each stage saves to $TV_BUCKET/$RUN before it ends; train also
 # saves every 10 minutes and resumes from the bucket.
+# Experimental: VOICES=F2,M2,S1 with NEW_VOICES=hf://buckets/<you>/<bucket>/<folder> trains with more voices; each new voice is a
+# render_voice.py output in $NEW_VOICES/<voice> (manifest.jsonl and audio/).
 set -uo pipefail
 STAGE=${1:?stage: data | train | eval | all}
 TV_REPO=https://github.com/n4ze3m/tiny-voca; TV_COMMIT=${TV_COMMIT:-903f940}
@@ -17,6 +19,7 @@ SMOKE=${SMOKE:-0}
 RUN=${RUN:-$([ "$SMOKE" = 1 ] && echo smoke || echo repro)}
 STEPS=${STEPS:-$([ "$SMOKE" = 1 ] && echo 300 || echo 104000)}
 GAN_START=$([ "$SMOKE" = 1 ] && echo 100 || echo 8000)
+VOICES=${VOICES:-}   # empty: the two dataset voices F2,M2
 PER_VOICE=${PER_VOICE:-$([ "$SMOKE" = 1 ] && echo 4 || echo 300)}   # evaluation clips per voice and split
 BK=${TV_BUCKET:?set TV_BUCKET, e.g. hf://buckets/<you>/<bucket>/tiny-voca}/$RUN
 W=/work; HERE=$(dirname "$0"); HF=/opt/hfcli/bin/hf
@@ -38,6 +41,14 @@ setup() {
   mkdir -p $W && cd $W
   echo probe > $W/probe.txt && $HF buckets cp $W/probe.txt $BK/probe.txt >/dev/null && $HF buckets cp $BK/probe.txt - >/dev/null || fail "cannot write to $BK"
   $HF download n4ze3m/tiny-voca --revision $MODEL_REV --include "phonemizer/*" --include tiny-voca.pt --local-dir $W/weights -q >/dev/null || fail "weights"
+  CFG=""   # the speakers are a Config field: pass a config file to prepare, annotate and train
+  if [ -n "$VOICES" ]; then
+    python -c "import json,sys; from tiny_voca.config import Config; print(json.dumps(Config(speakers=tuple(sys.argv[1].split(','))).to_dict()))" \
+        "$VOICES" > $W/config.json || fail "config for VOICES=$VOICES"
+    CFG="--config $W/config.json"; log "voices: $VOICES"
+    # tiny_voca.infer accepts only --voice F2 or M2 at the pinned commit: let it accept every voice of the checkpoint
+    (cd "$(python -c 'import os,tiny_voca; print(os.path.dirname(os.path.dirname(tiny_voca.__file__)))')" && git apply -p1 $HERE/patches/infer-voices.patch) || fail "patch infer"
+  fi
   nvidia-smi --query-gpu=name,memory.total --format=csv,noheader; log "setup done"
 }
 save() { log "save $*"; for d in "$@"; do retry $HF buckets sync $W/$d $BK/$d --exclude "*.tmp" || fail "save $d"; done; }
@@ -50,16 +61,28 @@ data() {
   log "prepare workers: $(cpus)"
   $HF download n4ze3m/tiny-voca --repo-type dataset --revision $DS_REV --include "data/*" --include "batch2/data/*" --local-dir $W/ds -q >/dev/null || fail "dataset"
   pick() { if [ "$SMOKE" = 1 ]; then ls $1 | head -2; else ls $1; fi; }
+  # new voices: split each render manifest by split, in one chunk per CPU (prepare_sharded runs one process per input file)
+  for v in ${VOICES//,/ }; do case $v in F2|M2) continue;; esac
+    [ -n "${NEW_VOICES:-}" ] || fail "VOICES has $v: set NEW_VOICES"
+    retry $HF buckets sync ${NEW_VOICES%/}/$v $W/new/$v --exclude "*.sqlite" || fail "load new voice $v"
+    python -c "import json,sys,pathlib; d=pathlib.Path(sys.argv[1]); n=int(sys.argv[2]); rows=[json.loads(l) for l in open(d/'manifest.jsonl') if l.strip()]
+for s in ('train','validation','test'):
+    part=[r for r in rows if r['split']==s]; k=max(1,min(n,len(part)//200))
+    for i in range(k): (d/f'{s}-{i:03d}.jsonl').write_text(''.join(json.dumps(r,ensure_ascii=False)+'\\n' for r in part[i::k]))
+    print(s, len(part), 'clips of $v in', k, 'files')" $W/new/$v $(cpus) || fail "split $v"
+  done
+  new() { ls $W/new/*/$1-*.jsonl 2>/dev/null; }
   python $HERE/prepare_sharded.py --split train --inputs $(pick "$W/ds/data/train-*.parquet") $(pick "$W/ds/batch2/data/train-*.parquet") \
-      --output $W/features --workers $(cpus) || fail "prepare train"
-  for s in validation test; do python $HERE/prepare_sharded.py --split $s --inputs $(pick "$W/ds/data/$s-*.parquet") --output $W/features \
-      --workers $(cpus) || fail "prepare $s"; done
+      $(new train) --output $W/features --workers $(cpus) $CFG || fail "prepare train"
+  for s in validation test; do python $HERE/prepare_sharded.py --split $s --inputs $(pick "$W/ds/data/$s-*.parquet") $(new $s) --output $W/features \
+      --workers $(cpus) $CFG || fail "prepare $s"; done
   # annotate loads its aligner from the local cache only
   python -c "from huggingface_hub import snapshot_download as d; d('facebook/wav2vec2-lv-60-espeak-cv-ft')" >/dev/null || fail "aligner download"
-  python -m tiny_voca.annotate --features $W/features --output $W/annotations --dataset-revision $DS_REV || fail "annotate"
+  python -m tiny_voca.annotate --features $W/features --output $W/annotations --dataset-revision $DS_REV $CFG || fail "annotate"
   # the released model's annotations (dataset annotations/v4) kept 16,018 / 714 / 594 clips
   for s in train validation test; do log "annotated $s: $(grep -c . $W/annotations/$s.jsonl) clips"; done
-  if [ "$SMOKE" != 1 ] && [ "$DS_REV" = 63b6b89622e984d7c7a0799ca4b4c443dd5f48b2 ]; then
+  for v in ${VOICES//,/ }; do log "annotated $v: $(cat $W/annotations/{train,validation,test}.jsonl | grep -c "\"speaker\": \"$v\"") clips"; done
+  if [ "$SMOKE" != 1 ] && [ -z "$VOICES" ] && [ "$DS_REV" = 63b6b89622e984d7c7a0799ca4b4c443dd5f48b2 ]; then
     for e in train:16018 validation:714 test:594; do n=$(grep -c . $W/annotations/${e%%:*}.jsonl); d=$(( n - ${e##*:} ))
       [ ${d#-} -le 5 ] || fail "annotated ${e%%:*}: $n clips, expected about ${e##*:}"; done
   fi
@@ -83,7 +106,7 @@ train() {
       $HF buckets sync $W/runs/$RUN $BK/runs/$RUN --exclude "*.tmp" >/dev/null 2>&1 || log "periodic save failed"
     done ) & SYNC=$!
   python -m tiny_voca.train --train $W/annotations/train.jsonl --validation $W/annotations/validation.jsonl --output $W/runs/$RUN \
-      --steps $STEPS --gan-start $GAN_START --gan-ratio 0.7 --teacher-final 0 --max-seconds 172800 $R
+      $CFG --steps $STEPS --gan-start $GAN_START --gan-ratio 0.7 --teacher-final 0 --max-seconds 172800 $R
   rc=$?; touch $W/.stop-sync; wait $SYNC; save runs/$RUN
   [ $rc = 0 ] || fail "train"; log "train done"
 }
@@ -92,7 +115,11 @@ evaluate() {
   [ -f $W/runs/$RUN/inference.pt ] || load runs/$RUN
   [ -f $W/annotations/test.jsonl ] || load features annotations
   python -m tiny_voca.evaluate --checkpoint $W/runs/$RUN/inference.pt --annotations $W/annotations --output $W/eval/$RUN --tag $RUN --per-voice $PER_VOICE || fail "evaluate"
-  python -m tiny_voca.evaluate --checkpoint $W/weights/tiny-voca.pt --annotations $W/annotations --output $W/eval/released --tag released --per-voice $PER_VOICE || fail "evaluate released"
+  # the released model knows F2 and M2 only: score it on their clips
+  A=$W/annotations
+  if [ -n "$VOICES" ]; then A=$W/annotations-released; mkdir -p $A; cp $W/annotations/annotations.json $A/
+    for s in train validation test; do grep -E '"speaker": "(F2|M2)"' $W/annotations/$s.jsonl > $A/$s.jsonl; done; fi
+  python -m tiny_voca.evaluate --checkpoint $W/weights/tiny-voca.pt --annotations $A --output $W/eval/released --tag released --per-voice $PER_VOICE || fail "evaluate released"
   mkdir -p $W/export && python -m tiny_voca.export --checkpoint $W/runs/$RUN/inference.pt --output $W/export/tiny-voca-$RUN.onnx || fail "export"
   # one line per model for the log; the full reports are eval/<run>/report.json and eval/released/report.json
   for t in $RUN released; do python -c "import json,sys; r=json.load(open(sys.argv[1])); a=r['summary']['test']['all']

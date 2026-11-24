@@ -19,12 +19,18 @@ ap.add_argument("--split", required=True)
 ap.add_argument("--inputs", nargs="+", type=Path, required=True)
 ap.add_argument("--output", type=Path, required=True)
 ap.add_argument("--workers", type=int, default=8)
+ap.add_argument("--config", type=Path, help="tiny_voca Config JSON (e.g. with a third voice in `speakers`)")
 a = ap.parse_args()
 
 inputs = list(a.inputs)
 k = min(a.workers, len(inputs))
-# contiguous slices of about equal bytes (keeps the input order; the input files differ a lot in size)
-sizes = [p.stat().st_size for p in inputs]
+# contiguous slices of about equal bytes (keeps the input order; the input files differ a lot in size). A JSONL input (a new
+# voice from render_voice.py) counts the bytes of the audio files it lists.
+def size(p):
+    if p.suffix != ".jsonl":
+        return p.stat().st_size
+    return sum((p.parent / json.loads(line)["audio"]).stat().st_size for line in p.read_text(encoding="utf-8").split("\n") if line.strip())
+sizes = [size(p) for p in inputs]
 total, shards, cur, acc = sum(sizes), [], [], 0
 for p, n in zip(inputs, sizes):
     cur.append(p); acc += n
@@ -40,6 +46,8 @@ procs = []
 for i, files in enumerate(shards):
     log = open(a.output / f"prepare-{a.split}-{i}.log", "a")
     cmd = [sys.executable, "-m", "tiny_voca.prepare", "--split", a.split, "--output", str(work / str(i)), "--inputs", *map(str, files)]
+    if a.config:
+        cmd += ["--config", str(a.config)]
     if (work / str(i) / f"{a.split}.preparation.json").exists():
         cmd.append("--resume")
     procs.append(subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT))

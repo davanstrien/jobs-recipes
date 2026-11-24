@@ -1,0 +1,20 @@
+--- a/tiny_voca/infer.py	2026-11-24 00:01:12
++++ b/tiny_voca/infer.py	2026-11-24 00:01:12
+@@ -174,7 +174,7 @@
+     source = parser.add_mutually_exclusive_group(required=True)
+     source.add_argument("--text", help="Text of any length; it is read sentence by sentence")
+     source.add_argument("--text-file", type=Path, help="Read the text from a file (UTF-8)")
+-    parser.add_argument("--voice", choices=("F2", "M2"), default="F2")
++    parser.add_argument("--voice", default="F2", help="A voice of the checkpoint (the released one has F2 and M2)")
+     parser.add_argument("--output", type=Path, required=True)
+     parser.add_argument("--speed", type=float, default=1)
+     parser.add_argument("--pitch-shift", type=float, default=0, help="Added to log F0 (0.058 is about one semitone)")
+@@ -190,6 +190,8 @@
+     elif FRONTEND_VARIABLE not in os.environ:
+         match_frontend(args.checkpoint)
+     model = load_model(args.checkpoint, args.device, check_frontend=not args.allow_frontend_mismatch)
++    if args.voice not in model.config.speakers:
++        parser.error(f"--voice must be one of {', '.join(model.config.speakers)}")
+     text = args.text if args.text is not None else args.text_file.read_text(encoding="utf-8")
+     try:
+         raw, spoken = speak_text(model, text, args.voice, args.speed, args.pitch_shift, pitch_range=args.pitch_range, peak=None)

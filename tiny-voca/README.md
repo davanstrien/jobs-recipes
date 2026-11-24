@@ -171,16 +171,83 @@ fingerprint. The ONNX file works in the same way as `onnx/model.onnx` in the
   work, but they are not tested. The evaluation runs Whisper on the CPU.
 - **Python packages.** The tiny-voca code, the phonemizer, the dataset and the released weights are pinned. torch and the
   other packages are not, so a later install can move the clip counts or the scores a little.
-- **Experimental: new voices.** `design_voice.py` makes voice designs with Qwen3-TTS VoiceDesign, the method that made the
-  two released voices. It writes one clip per design and seed:
+- **Experimental: new voices.** See [A new voice (experimental)](#a-new-voice-experimental).
 
-  ```bash
-  hf jobs run --flavor l4x1 --timeout 1h --secrets HF_TOKEN -v ./tiny-voca:/scripts:ro \
-      -v hf://buckets/<you>/<bucket>/tiny-voca/design:/out ghcr.io/astral-sh/uv:python3.12-bookworm \
-      bash -c 'uv pip install -q --system qwen-tts soundfile torch && python /scripts/design_voice.py --designs /scripts/designs.example.json --out /out/try1'
-  ```
+## A new voice (experimental)
 
-  The steps that render training audio in a new voice and train with it are not part of this recipe yet.
+This section is experimental. The design and render steps are tested on small samples. The training step with a third
+voice is not tested.
+
+The two released voices were made in three steps: design a voice from a text description, pick one clip, and read all
+the sentences in that voice. This recipe has the same steps.
+
+**1. Design.** `design_voice.py` makes voice designs with Qwen3-TTS VoiceDesign. It writes one clip per design and seed,
+and `voices.json` with the text of each clip:
+
+```bash
+hf jobs run --flavor l4x1 --timeout 1h --secrets HF_TOKEN -v ./tiny-voca:/scripts:ro \
+    -v hf://buckets/<you>/<bucket>/tiny-voca/design:/out ghcr.io/astral-sh/uv:python3.12-bookworm \
+    bash -c 'uv pip install -q --system qwen-tts soundfile torch && python /scripts/design_voice.py --designs /scripts/designs.example.json --out /out/try1'
+```
+
+**2. Pick.** Listen to the clips and pick one per new voice, for example `S1-s31416.wav`. That clip is the voice prompt.
+
+**3. Render.** `render_voice.py` reads the sentences of the dataset voice F2 in the new voice: 8,683 sentences (8,028 train,
+359 validation, 296 test), with the same ids and splits. It uses the method of the released data: Qwen3-TTS 1.7B Base
+clones the prompt clip, Whisper small.en reads each clip back, and a clip fails above 15 % normalized WER or with a bad
+duration, speaking rate or silence. A failed clip gets one more try. The output is `manifest.jsonl` (the accepted clips,
+in the form that `tiny_voca.prepare` reads), `audio/`, `review.jsonl` (the rejected clips) and `summary.json`.
+
+```bash
+hf jobs run --flavor a10g-large --timeout 5h --secrets HF_TOKEN -v ./tiny-voca:/scripts:ro \
+    -v hf://buckets/<you>/<bucket>/tiny-voca/design/try1:/refs:ro -v hf://buckets/<you>/<bucket>/tiny-voca/voices:/out \
+    ghcr.io/astral-sh/uv:python3.12-bookworm bash -c 'uv pip install -q --system qwen-tts faster-whisper jiwer scipy soundfile pyarrow huggingface_hub torch \
+    && python /scripts/render_voice.py --voice S1 --reference /refs/S1-s31416.wav --root /work/S1 --mirror /out/S1 --max-minutes 270'
+```
+
+- The script works in `/work` and copies the work to `--mirror` (here the bucket) every 10 minutes and at the end.
+- `--max-minutes` stops the generation before the Job timeout. If the Job stops, run the same command again: the script
+  copies the work back from `--mirror` and goes on.
+- For a test, add `--limit 50` (50 sentences, drawn at random) and use `--timeout 45m`.
+- The reference text comes from `voices.json` next to the clip. Give `--reference-text` for a clip from another source.
+- The Whisper read-back runs on the CPU, beside the GPU. Use a flavor with many vCPUs: on `a10g-small` (3 vCPUs) the
+  read-back limits the speed to 9.4 clips per minute.
+
+Smoke test: one `a10g-large` Job (12 vCPUs), 100 sentences per voice, drawn at random (the same sentences for each voice).
+The outputs are `summary.json`, `manifest.jsonl` and `review.jsonl` of each voice.
+
+| voice prompt | accepted | failed twice | second tries | mean read-back WER | clips per minute |
+|---|---|---|---|---|---|
+| F3 in `designs.example.json` (American) | 100 | 0 | 0 | 1.09 % | 40.3 |
+| a Scottish woman, Edinburgh accent | 99 | 1 | 1 | 1.02 % | 37.4 |
+| a Scottish man, strong Glasgow accent | 100 | 0 | 1 | 0.90 % | 40.4 |
+
+- Speed: about 40 clips per minute on `a10g-large`. With `--batch 16`, the GPU time fell from 140 s to 102 s per 100
+  clips, but the speed stayed at 40 clips per minute: the read-back on the CPU limits it. The default stays at 8, as
+  upstream.
+- Projected full render: 8,683 sentences and about 1 % second tries, at 40 clips per minute, is about 3.7 h. On
+  `a10g-large` ($1.50 per hour) that is about $5.50 per voice. This is a projection from 100 clips.
+- The screen did not reject the Scottish voices more often than the American voice. Most read-back errors are spelling
+  variants that the normaliser does not map (grey and gray, offence and offense, disk and disc), the same for all voices.
+- The screen checks the words, not the accent. Listen to some clips to make sure that the accent is in the rendered
+  audio, before you start the full render.
+
+**4. Train with the new voice (not tested).** `run.sh` takes two more variables:
+
+| variable | example | meaning |
+|---|---|---|
+| `VOICES` | `F2,M2,S1` | the voices of the model, in this order. Empty (default): `F2,M2`. |
+| `NEW_VOICES` | `hf://buckets/<you>/<bucket>/tiny-voca/voices` | bucket folder with one `render_voice.py` output per new voice, in `<folder>/<voice>/` |
+
+Run the stages as in [Run it](#run-it), with a new `RUN` and the same `VOICES` for each stage. With `VOICES` set:
+
+- `run.sh` writes a tiny-voca `Config` with these voices, and gives it to `tiny_voca.prepare`, `tiny_voca.annotate` and
+  `tiny_voca.train`. The data stage prepares and aligns all voices again. It does not check the clip counts of the
+  released data; it logs the clip count of each voice.
+- The eval stage scores the new model on all its voices. It scores the released model on F2 and M2 only.
+- `patches/infer-voices.patch` lets `tiny_voca.infer --voice` take any voice of the checkpoint (the pinned upstream code
+  takes F2 or M2 only). `run.sh` applies it in the Job. To speak with the model on your computer, apply it after the
+  install: go to the `site-packages` folder that holds `tiny_voca`, then `git apply -p1 <this folder>/patches/infer-voices.patch`.
 
 ## Credits and licences
 
