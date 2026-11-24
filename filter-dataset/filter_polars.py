@@ -104,9 +104,9 @@ def shard(path, out_dir):
 
 def made_with(seconds):
     recipe = "[filter-dataset recipe](https://github.com/davanstrien/jobs-recipes/tree/main/filter-dataset) (`filter_polars.py`)"
-    if os.environ.get("JOB_ID"):   # set inside a Hugging Face Job
+    if os.environ.get("HF_JOB_ID"):   # set inside a Hugging Face Job
         return (f"Made on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs) with the {recipe}, "
-                f"in {round(seconds)} s of filtering on one CPU Job.")
+                f"in {round(seconds)} s of filtering on one `{os.environ['HF_JOB_FLAVOR']}` Job.")
     return f"Made with the {recipe}."
 
 
@@ -114,12 +114,13 @@ def card(a, revision, files, n_in, n_out, engine_version, seconds):
     meta = {"source": a.dataset, "revision": revision, "include": a.include, "where": a.where, "columns": a.columns,
             "engine": f"{ENGINE} {engine_version}", "input_files": len(files), "input_rows": n_in, "output_rows": n_out,
             "seconds": round(seconds)}
+    jobs_tag = "\n- hf_jobs" if os.environ.get("HF_JOB_ID") else ""   # the tag TRL writes for models trained on Jobs
     return f"""---
 configs:
 - config_name: default
   data_files: data/*.parquet
 tags:
-- filtered
+- filtered{jobs_tag}
 ---
 
 # {a.output_repo.split('/')[-1]}
