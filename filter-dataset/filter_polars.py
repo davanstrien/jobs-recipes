@@ -113,7 +113,7 @@ def made_with(seconds):
 def card(a, revision, files, n_in, n_out, engine_version, seconds):
     meta = {"source": a.dataset, "revision": revision, "include": a.include, "where": a.where, "columns": a.columns,
             "engine": f"{ENGINE} {engine_version}", "input_files": len(files), "input_rows": n_in, "output_rows": n_out,
-            "seconds": round(seconds)}
+            "seconds": round(seconds), "flavor": os.environ.get("HF_JOB_FLAVOR")}
     jobs_tag = "\n- hf_jobs" if os.environ.get("HF_JOB_ID") else ""   # the tag TRL writes for models trained on Jobs
     return f"""---
 configs:
@@ -130,7 +130,7 @@ Read the source dataset's card for its licence and terms; they apply to this sub
 
 | | |
 |---|---|
-| input files | `{', '.join(a.include)}` ({len(files)} files) |
+| input files | `{', '.join(a.include)}` ({len(files)} file{'' if len(files) == 1 else 's'}) |
 | filter | `{a.where}` |
 | columns | {', '.join(f'`{c}`' for c in a.columns) if a.columns else 'all'} |
 | rows | {n_out:,} of {n_in:,} ({100 * n_out / max(n_in, 1):.3f} %) |
