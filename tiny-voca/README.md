@@ -167,8 +167,9 @@ fingerprint. The ONNX file works in the same way as `onnx/model.onnx` in the
 
 ## Notes
 
-- **Other GPUs.** The full run was tested on `rtx-pro-6000` (about 7.2 training steps per second). Other flavors should
-  work, but they are not tested. The evaluation runs Whisper on the CPU.
+- **Other GPUs.** The full run was tested on `rtx-pro-6000`. It gave the lowest cost per run of the flavors we timed:
+  10 minutes of training on `t4-small`, `l4x1`, `a10g-small`, `l40sx1` and `h200` kept the GPU 70-88 % busy, so a
+  cheaper GPU was slower by about as much as it was cheaper. The evaluation runs Whisper on the CPU.
 - **Python packages.** The tiny-voca code, the phonemizer, the dataset and the released weights are pinned. torch and the
   other packages are not, so a later install can move the clip counts or the scores a little.
 - **Experimental: new voices.** `design_voice.py` makes voice designs with Qwen3-TTS VoiceDesign, the method that made the
