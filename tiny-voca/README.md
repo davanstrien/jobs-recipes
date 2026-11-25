@@ -6,6 +6,7 @@ runs the upstream README's training steps: data preparation, alignment, training
 kept in a [Hugging Face bucket](https://huggingface.co/docs/hub/storage-buckets), so a stopped run can resume.
 
 Cost: about $15 for a full run (5.5 h on one `rtx-pro-6000` at $2.75 per hour; `hf jobs hardware` has current prices).
+The upstream project's training run cost $2.89 on a rented RTX 4090; "Cost compared with upstream" in Notes explains the difference.
 
 ## Results
 
@@ -167,8 +168,23 @@ fingerprint. The ONNX file works in the same way as `onnx/model.onnx` in the
 
 ## Notes
 
-- **Other GPUs.** The full run was tested on `rtx-pro-6000` (about 7.2 training steps per second). Other flavors should
-  work, but they are not tested. The evaluation runs Whisper on the CPU.
+- **Cost compared with upstream.** The tiny-voca README gives $9.56 of GPU time for the whole project on one rented
+  RTX 4090, of which $2.89 was the 7.7 h training run (about $0.38 per GPU hour). Here the training takes 3 h 50 min on
+  `rtx-pro-6000`, about $10.50. In 10-minute training tests on other flavors, the GPU was 70-88 % busy on each, so a
+  cheaper flavor was slower by about as much as it was cheaper:
+
+  | flavor | $/h | training steps/s | full training (estimated) |
+  |---|---|---|---|
+  | t4-small | 0.40 | 0.87 | 32 h, $13 |
+  | l4x1 | 0.80 | 1.46 | 19 h, $15 |
+  | a10g-small | 1.00 | 2.12 | 13 h, $13 |
+  | l40sx1 | 1.80 | 4.06 | 6.8 h, $12 |
+  | rtx-pro-6000 | 2.75 | 7.18 | 3.8 h, $10.50 (measured) |
+  | h200 | 5.00 | 7.74 | 3.5 h, $18 |
+
+  bf16 autocast made training slower (3.8 against 6.8 steps/s), and `torch.compile` compiled again for each batch length.
+- **Other GPUs.** The full run was tested on `rtx-pro-6000` only. The other flavors in the table above ran 10 minutes of
+  training each, not a full run. The evaluation runs Whisper on the CPU.
 - **Python packages.** The tiny-voca code, the phonemizer, the dataset and the released weights are pinned. torch and the
   other packages are not, so a later install can move the clip counts or the scores a little.
 - **Experimental: new voices.** `design_voice.py` makes voice designs with Qwen3-TTS VoiceDesign, the method that made the
